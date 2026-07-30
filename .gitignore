@@ -1,0 +1,21 @@
+# Python 
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Virtual environment
+tennis-env/
+
+# Dataset
+data/
+
+# Model weights
+*.params
+*.params.*
+models/vision/experiments/
+
+# Logs
+*.log
+
+# IDE
+.idea/
