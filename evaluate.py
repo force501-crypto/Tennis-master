@@ -1,4 +1,4 @@
-"""Evaluation script"""
+"""test"""
 from absl import app, flags
 from absl.flags import FLAGS
 import multiprocessing
