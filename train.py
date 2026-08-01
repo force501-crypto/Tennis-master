@@ -19,7 +19,8 @@ from mxnet.gluon.data.vision import transforms
 from gluoncv.model_zoo import get_model
 from gluoncv.utils.metrics.accuracy import Accuracy
 
-from models.vision.definitions import CNNRNN, FrameModel, TwoStreamModel, TemporalPooling
+from models.vision.definitions import (CNNRNN, FrameModel, TemporalConvNet,
+                                       TwoStreamModel, TemporalPooling)
 from dataset import TennisSet
 from metrics.vision import PRF1
 from models.vision.rdnet.r21d import get_r21d
@@ -99,7 +100,17 @@ flags.DEFINE_string('feats_model', None,
 flags.DEFINE_string('flow', '',
                     'How to use flow, "" for none, "only" for no rgb, "sixc" for six channel inp, "twos" for twostream')
 flags.DEFINE_string('temp_pool', None,
-                    'mean, max or gru.')
+                    'Temporal model: mean, max, gru, lstm or tcn.')
+flags.DEFINE_integer('feature_size', 0,
+                     'Flattened feature size override. Zero detects the stored feature shape automatically.')
+flags.DEFINE_integer('tcn_hidden', 128,
+                     'Number of hidden channels in the temporal convolution network.')
+flags.DEFINE_integer('tcn_layers', 4,
+                     'Number of residual TCN layers; dilation doubles per layer.')
+flags.DEFINE_integer('tcn_kernel_size', 3,
+                     'Odd temporal convolution kernel size.')
+flags.DEFINE_float('tcn_dropout', 0.2,
+                   'Dropout applied inside TCN residual blocks.')
 
 flags.DEFINE_integer('max_batches', -1,  # for 0031
                      'Only do this many batches then break')
@@ -253,6 +264,12 @@ def main(_argv):
 
         if FLAGS.temp_pool in ['gru', 'lstm']:
             model = CNNRNN(model, num_classes=len(test_set.classes), type=FLAGS.temp_pool, hidden_size=128)
+        elif FLAGS.temp_pool == 'tcn':
+            model = TemporalConvNet(
+                model, num_classes=len(test_set.classes), window=FLAGS.window,
+                hidden_size=FLAGS.tcn_hidden, num_layers=FLAGS.tcn_layers,
+                kernel_size=FLAGS.tcn_kernel_size, dropout=FLAGS.tcn_dropout)
+            logging.info('TCN temporal receptive field: %d frames', model.receptive_field)
         elif FLAGS.temp_pool in ['mean', 'max']:
             pass
         else:
@@ -274,10 +291,18 @@ def main(_argv):
             logging.info(model.summary(mx.nd.ndarray.ones(shape=(1, FLAGS.window,
                                                                  num_channels, FLAGS.data_shape, FLAGS.data_shape))))
     else:
-        if FLAGS.window == 1:
-            logging.info(model.summary(mx.nd.ndarray.ones(shape=(1, 4096))))
-        elif FLAGS.temp_pool not in ['max', 'mean']:
-            logging.info(model.summary(mx.nd.ndarray.ones(shape=(1, FLAGS.window, 4096))))
+        if FLAGS.window <= 1:
+            raise ValueError('--feats_model requires --window greater than one')
+        if FLAGS.temp_pool not in ['max', 'mean']:
+            if FLAGS.feature_size > 0:
+                summary_input = mx.nd.ones(
+                    shape=(1, FLAGS.window, FLAGS.feature_size))
+            else:
+                sample_features = test_set[0][0]
+                summary_input = mx.nd.expand_dims(sample_features, axis=0)
+                logging.info('Detected stored feature window shape: %s',
+                             tuple(summary_input.shape))
+            logging.info(model.summary(summary_input))
 
     model.collect_params().reset_ctx(ctx)
     model.hybridize()

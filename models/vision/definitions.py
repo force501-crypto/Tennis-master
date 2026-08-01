@@ -110,6 +110,75 @@ class CNNRNN(HybridBlock):
         return x
 
 
+class TemporalResidualBlock(HybridBlock):
+    """A residual dilated temporal convolution block."""
+
+    def __init__(self, channels, kernel_size=3, dilation=1, dropout=0.2, **kwargs):
+        super(TemporalResidualBlock, self).__init__(**kwargs)
+        if kernel_size < 1 or kernel_size % 2 == 0:
+            raise ValueError('kernel_size must be a positive odd integer')
+        padding = dilation * (kernel_size - 1) // 2
+        with self.name_scope():
+            self.conv1 = nn.Conv1D(channels, kernel_size=kernel_size,
+                                   padding=padding, dilation=dilation)
+            self.conv2 = nn.Conv1D(channels, kernel_size=kernel_size,
+                                   padding=padding, dilation=dilation)
+            self.dropout1 = nn.Dropout(dropout)
+            self.dropout2 = nn.Dropout(dropout)
+
+    def hybrid_forward(self, F, x):
+        residual = x
+        x = self.conv1(x)
+        x = F.relu(x)
+        x = self.dropout1(x)
+        x = self.conv2(x)
+        x = F.relu(x)
+        x = self.dropout2(x)
+        return F.relu(x + residual)
+
+
+class TemporalConvNet(HybridBlock):
+    """Classify the centre frame of a feature window with a dilated TCN."""
+
+    def __init__(self, model, num_classes, window, hidden_size=128, num_layers=4,
+                 kernel_size=3, dropout=0.2, **kwargs):
+        super(TemporalConvNet, self).__init__(**kwargs)
+        if window < 2:
+            raise ValueError('TCN requires a temporal window greater than one')
+        if num_layers < 1:
+            raise ValueError('num_layers must be positive')
+        if hidden_size < 1:
+            raise ValueError('hidden_size must be positive')
+        if not 0.0 <= dropout < 1.0:
+            raise ValueError('dropout must be in [0, 1)')
+        self.feats = model is None
+        self.center = window // 2
+        self.receptive_field = 1 + 2 * (kernel_size - 1) * sum(
+            2 ** layer_index for layer_index in range(num_layers))
+        with self.name_scope():
+            if model is not None:
+                self.td = TimeDistributed(model.backbone)
+            self.input_projection = nn.Conv1D(hidden_size, kernel_size=1)
+            self.temporal_blocks = nn.HybridSequential()
+            for layer_index in range(num_layers):
+                self.temporal_blocks.add(TemporalResidualBlock(
+                    hidden_size, kernel_size=kernel_size,
+                    dilation=2 ** layer_index, dropout=dropout))
+            self.classes = nn.Dense(num_classes, flatten=True)
+
+    def hybrid_forward(self, F, x):
+        if not self.feats:
+            x = self.td(x)
+        # Collapse any spatial feature dimensions while preserving N and T.
+        x = F.reshape(x, shape=(0, 0, -1))
+        x = F.swapaxes(x, 1, 2)  # NTC -> NCT for Conv1D
+        x = self.input_projection(x)
+        x = self.temporal_blocks(x)
+        x = F.slice_axis(x, axis=2, begin=self.center, end=self.center + 1)
+        x = F.squeeze(x, axis=2)
+        return self.classes(x)
+
+
 class Debug(HybridBlock):
     def __init__(self, **kwargs):
         """

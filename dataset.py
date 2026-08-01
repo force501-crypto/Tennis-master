@@ -366,35 +366,47 @@ class TennisSet:
                         labels[v][min_f-i] = 'OTH'
                         labels[v][max_f+i] = 'OTH'
 
-            # verify images exist, if not try and extract, if not again then ignore
-            for i in range(2):  # go around twice, so if not all samples found extract, then re-check
-                samples_exist = list()
-                samples_exist_flag = True
+            if self._load_feats:
+                missing_features = [
+                    self.get_feature_path(self.feat_dir, sample[0], sample[1])
+                    for sample in samples
+                    if not os.path.exists(
+                        self.get_feature_path(self.feat_dir, sample[0], sample[1]))
+                ]
+                if missing_features:
+                    preview = '\n'.join(missing_features[:5])
+                    raise FileNotFoundError(
+                        '{} pre-extracted feature files are missing. First paths:\n{}\n'
+                        'Run train.py with --save_feats for the source model before '
+                        'training a temporal model.'.format(len(missing_features), preview))
+            else:
+                # Verify images exist, try extracting once, then ignore unavailable samples.
+                for i in range(2):
+                    samples_exist = list()
+                    samples_exist_flag = True
 
-                for s in samples:
-                    if not os.path.exists(self.get_image_path(self._frames_dir, s[0], s[1])):
-                        if i == 0:  # first attempt checking all samples exist, try extracting
-                            samples_exist_flag = False  # will flag to extract frames
+                    for s in samples:
+                        image_path = self.get_image_path(self._frames_dir, s[0], s[1])
+                        if not os.path.exists(image_path):
+                            if i == 0:
+                                samples_exist_flag = False
+                                logging.info("{} does not exist, will extract frames.".format(
+                                    image_path))
+                                break
+                            logging.info("{} does not exist, will ignore sample.".format(
+                                image_path))
+                        else:
+                            samples_exist.append(s)
 
-                            logging.info("{} does not exist, will extract frames."
-                                         "".format(self.get_image_path(self._frames_dir, s[0], s[1])))
-                            break
+                    if samples_exist_flag:
+                        break
+                    for video in videos:
+                        video_to_frames(
+                            video_path=os.path.join(self._videos_dir, video + '.mp4'),
+                            frames_dir=self._frames_dir,
+                            chunk_size=1000)
 
-                        else:  # second attempt, just ignore samples
-                            logging.info("{} does not exist, will ignore sample."
-                                         "".format(self.get_image_path(self._frames_dir, s[0], s[1])))
-                    else:
-                        samples_exist.append(s)
-
-                if samples_exist_flag:  # all samples exist
-                    break
-                else:
-                    for video in videos:  # lets extract frames
-                        video_to_frames(video_path=os.path.join(self._videos_dir, video + '.mp4'),  # assuming .mp4
-                                        frames_dir=self._frames_dir,
-                                        chunk_size=1000)
-
-            samples = samples_exist
+                samples = samples_exist
 
             # load the class labels for each sample
             for video in videos:
