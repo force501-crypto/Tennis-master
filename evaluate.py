@@ -1,4 +1,4 @@
-"""test"""
+"""Test u bro"""
 from absl import app, flags
 from absl.flags import FLAGS
 import multiprocessing
@@ -91,6 +91,8 @@ flags.DEFINE_bool('save_predictions', False,
                   'Save per-frame logits, probabilities, labels and metadata as a compressed npz file.')
 flags.DEFINE_string('predictions_file', None,
                     'Optional prediction npz output path. Implies --save_predictions.')
+flags.DEFINE_bool('compress_predictions', True,
+                  'Compress prediction npz output. Disable for faster writes on mounted drives.')
 
 
 def main(_argv):
@@ -102,7 +104,7 @@ def main(_argv):
     mx.random.seed(FLAGS.seed)
 
     if FLAGS.num_workers < 0:
-        FLAGS.num_workers = multiprocessing.cpu_count()
+        FLAGS.num_workers = min(8, multiprocessing.cpu_count())
 
     ctx = [mx.gpu(i) for i in range(FLAGS.num_gpus)] if FLAGS.num_gpus > 0 else [mx.cpu()]
 
@@ -133,7 +135,8 @@ def main(_argv):
     print(test_set)
 
     test_data = gluon.data.DataLoader(test_set, batch_size=FLAGS.batch_size,
-                                      shuffle=False, num_workers=0)
+                                      shuffle=False, num_workers=FLAGS.num_workers)
+    print('Evaluation DataLoader workers: {}'.format(FLAGS.num_workers))
 
     # Define Model
     model = None
@@ -279,18 +282,31 @@ def main(_argv):
         assert FLAGS.backbone_from_id or FLAGS.feats_model  # if we doing temporal pooling ensure that we have loaded a pretrained net
         model = TemporalPooling(model, pool=FLAGS.temp_pool, num_classes=0, feats=FLAGS.feats_model!=None)
 
-    tic = time.time()
+    total_start = time.time()
+    evaluation_start = time.time()
+    collect_outputs = bool(FLAGS.vis or FLAGS.save_predictions or FLAGS.predictions_file)
 
-    results, gts = evaluate_model(model, test_data, test_set, test_metrics, ctx)
+    results, gts = evaluate_model(
+        model, test_data, test_set, test_metrics, ctx,
+        collect_outputs=collect_outputs)
+    evaluation_seconds = time.time() - evaluation_start
+    print('Model evaluation time: {:.1f} seconds'.format(evaluation_seconds))
 
+    prediction_save_seconds = 0.0
     if FLAGS.save_predictions or FLAGS.predictions_file:
         predictions_file = FLAGS.predictions_file
         if predictions_file is None:
             predictions_file = os.path.join(
                 'models', 'vision', 'experiments', FLAGS.model_id,
                 'predictions_{}.npz'.format(FLAGS.split))
-        save_predictions(results, gts, test_set, predictions_file)
-        print('Saved predictions to {}'.format(predictions_file))
+        prediction_save_start = time.time()
+        save_predictions(
+            results, gts, test_set, predictions_file,
+            compressed=FLAGS.compress_predictions)
+        prediction_save_seconds = time.time() - prediction_save_start
+        print('Saved predictions to {} in {:.1f} seconds ({})'.format(
+            predictions_file, prediction_save_seconds,
+            'compressed' if FLAGS.compress_predictions else 'uncompressed'))
 
     str_ = 'Test set:'
     for i in range(len(test_set.classes)):
@@ -308,7 +324,10 @@ def main(_argv):
             str_ += ', Test_{}={:.3f}'.format(res[0], res[1])
         metric.reset()
 
-    str_ += '  # Samples: {}, Time Taken: {:.1f}'.format(len(test_set), time.time() - tic)
+    str_ += ('  # Samples: {}, Evaluation Time: {:.1f}, Prediction Save Time: {:.1f}, '
+             'Total Time: {:.1f}').format(
+        len(test_set), evaluation_seconds, prediction_save_seconds,
+        time.time() - total_start)
     print(str_)
 
     if FLAGS.vis:
@@ -316,18 +335,22 @@ def main(_argv):
 
 
 # Testing/Validation function
-def evaluate_model(net, loader, dataset, metrics, ctx):
+def evaluate_model(net, loader, dataset, metrics, ctx, collect_outputs=True):
     results = dict()
     ground_truths = dict()
     for batch in tqdm(loader, total=len(loader), desc='Evaluating'):
         data = gluon.utils.split_and_load(batch[0], ctx_list=ctx, batch_axis=0, even_split=False)
         labels = gluon.utils.split_and_load(batch[1], ctx_list=ctx, batch_axis=0, even_split=False)
-        idxs = gluon.utils.split_and_load(batch[2], ctx_list=ctx, batch_axis=0, even_split=False)
         outputs = [net(x) for x in data]
 
         for metric in metrics:
             metric.update(labels, outputs)
 
+        if not collect_outputs:
+            continue
+
+        idxs = gluon.utils.split_and_load(
+            batch[2], ctx_list=ctx, batch_axis=0, even_split=False)
         for di in range(len(outputs)):  # loop over devices
             device_idxs = [int(idx) for idx in idxs[di].asnumpy()]
 
@@ -348,7 +371,7 @@ def evaluate_model(net, loader, dataset, metrics, ctx):
     return results, ground_truths
 
 
-def save_predictions(results, ground_truths, dataset, output_path):
+def save_predictions(results, ground_truths, dataset, output_path, compressed=True):
     """Save model outputs in a reusable format for analysis and post-processing."""
     paths = list(results.keys())
     if not paths:
@@ -371,7 +394,8 @@ def save_predictions(results, ground_truths, dataset, output_path):
     output_dir = os.path.dirname(output_path)
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
-    np.savez_compressed(
+    save_npz = np.savez_compressed if compressed else np.savez
+    save_npz(
         output_path,
         paths=np.asarray(paths),
         videos=videos,
