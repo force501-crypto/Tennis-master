@@ -1,7 +1,9 @@
 # MS-TCN 0010 pipeline
 
-The project now has one training entry point and one evaluation entry point:
+The project has one feature-preparation step, one training entry point, and one
+evaluation entry point:
 
+- `prepare_features.py` loads the existing DenseNet121 two-stream model 0010.
 - `train.py` trains MS-TCN model `0010`.
 - `evaluate.py` loads model `0010`, evaluates only `V006`, saves predictions,
   removes `OTH`, and exports every foreground class to a separate MP4.
@@ -10,22 +12,43 @@ Both entry points reject every model ID except `0010`.
 
 ## Required local assets
 
-The temporal network consumes pre-extracted feature arrays belonging to model
-`0010`:
+The existing frame model remains unchanged:
+
+```text
+models/vision/experiments/0010/0008.params
+models/vision/experiments/0010/scores.txt
+```
+
+`prepare_features.py` uses its RGB and optical-flow DenseNet backbones to write:
 
 ```text
 data/features/0010/V006.mp4/<chunk>/<frame>.npy
 ```
 
-Its trained parameters are read from:
+The new temporal parameters are kept in a separate subdirectory so they cannot
+overwrite `0008.params`:
 
 ```text
-models/vision/experiments/0010/*.params
-models/vision/experiments/0010/scores.txt
+models/vision/experiments/0010/mstcn/*.params
+models/vision/experiments/0010/mstcn/scores.txt
 ```
 
-The program stops with a clear error if either the `0010` features or the
-`0010` MS-TCN checkpoint are missing. It never falls back to another model.
+The program stops with a clear error if required RGB frames, optical flow,
+`0010` features, or the MS-TCN checkpoint are missing.
+
+## Prepare model 0010 features
+
+Run this once before MS-TCN training:
+
+```bash
+python prepare_features.py \
+  --model_id 0010 \
+  --splits train,val,test_006_full \
+  --num_gpus 1
+```
+
+Existing `.npy` features are skipped, so an interrupted extraction can safely
+be restarted with the same command.
 
 ## Train model 0010
 
@@ -68,19 +91,21 @@ Evaluation produces:
 
 ```text
 models/vision/experiments/0010/
-  predictions_V006.npz
-  class_clips/V006/
-    SFI.mp4
-    SFF.mp4
-    SFL.mp4
-    SNI.mp4
-    SNF.mp4
-    SNL.mp4
-    HFL.mp4
-    HFR.mp4
-    HNL.mp4
-    HNR.mp4
-    manifest.csv
+  0008.params
+  mstcn/
+    predictions_V006.npz
+    class_clips/V006/
+      SFI.mp4
+      SFF.mp4
+      SFL.mp4
+      SNI.mp4
+      SNF.mp4
+      SNL.mp4
+      HFL.mp4
+      HFR.mp4
+      HNL.mp4
+      HNR.mp4
+      manifest.csv
 ```
 
 Only classes detected in `V006` are created. No `OTH.mp4` and no combined

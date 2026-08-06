@@ -24,7 +24,7 @@ from utils.losses import get_class_weights
 flags.DEFINE_string('model_id', '0010', 'MS-TCN model and feature id.')
 flags.DEFINE_string('data_root', 'data', 'Dataset root.')
 flags.DEFINE_string('experiment_dir', None,
-                    'Checkpoint directory; defaults to experiments/0010.')
+                    'MS-TCN checkpoint directory; defaults to experiments/0010/mstcn.')
 flags.DEFINE_string('split_id', '02', 'Dataset split id.')
 flags.DEFINE_string('test_split', 'test_006_full',
                     'Final evaluation split; defaults to the full V006 test split.')
@@ -82,7 +82,7 @@ def main(_argv):
         if FLAGS.num_gpus > 0 else [mx.cpu()])
 
     experiment_dir = FLAGS.experiment_dir or os.path.join(
-        'models', 'vision', 'experiments', model_id)
+        'models', 'vision', 'experiments', model_id, 'mstcn')
     os.makedirs(experiment_dir, exist_ok=True)
     _configure_logging(experiment_dir)
     logging.info('Command: %s', ' '.join(sys.argv))

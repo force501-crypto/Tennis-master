@@ -2,6 +2,7 @@
 from collections import defaultdict
 import os
 
+import mxnet as mx
 import numpy as np
 from mxnet.gluon.data import Dataset
 
@@ -23,6 +24,14 @@ def feature_path(feature_dir, video, frame, chunk_size=1000):
     return os.path.join(
         feature_dir, '{}.mp4'.format(video), '{:010d}'.format(chunk),
         '{:010d}.npy'.format(frame))
+
+
+def image_path(image_dir, video, frame, chunk_size=1000):
+    """Return an extracted RGB/flow image path for one source frame."""
+    chunk = int(frame / chunk_size) * chunk_size
+    return os.path.join(
+        image_dir, '{}.mp4'.format(video), '{:010d}'.format(chunk),
+        '{:010d}.jpg'.format(frame))
 
 
 def build_contiguous_runs(samples, frame_step=1):
@@ -123,6 +132,60 @@ def load_split_samples(root, split_id, split, classes, video_id=None):
                 'Frame {} in {} has no label'.format(frame, video))
         samples.append([video, frame, class_name])
     return samples
+
+
+class TennisTwoStreamFrameSet(Dataset):
+    """RGB + optical-flow frames used to create model 0010 features."""
+
+    def __init__(self, split, transform, model_id=DEFAULT_MODEL_ID,
+                 split_id='02', root='data', video_id=None):
+        self.root = root
+        self.split = split
+        self.model_id = normalize_model_id(model_id)
+        self.transform = transform
+        self.classes = load_classes(root)
+        self.samples = load_split_samples(
+            root, split_id, split, self.classes, video_id=video_id)
+        self.frames_dir = os.path.join(root, 'frames')
+        self.flow_dir = os.path.join(root, 'flow')
+        self.feature_dir = os.path.join(root, 'features', self.model_id)
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, index):
+        video, frame, _ = self.samples[index]
+        rgb_path = image_path(self.frames_dir, video, frame)
+        flow_path = image_path(self.flow_dir, video, frame)
+        if not os.path.exists(rgb_path):
+            raise FileNotFoundError('RGB frame does not exist: {}'.format(rgb_path))
+        if not os.path.exists(flow_path):
+            raise FileNotFoundError('Flow frame does not exist: {}'.format(flow_path))
+
+        rgb = mx.image.imread(rgb_path, 1)
+        flow = mx.image.imread(flow_path, 1)
+        if int(rgb.shape[0]) == int(flow.shape[0]) + 16:
+            rgb = rgb[8:-8, :, :]
+        if tuple(rgb.shape[:2]) != tuple(flow.shape[:2]):
+            raise ValueError(
+                'RGB/flow dimensions differ at {}: {} versus {}'.format(
+                    video, tuple(rgb.shape), tuple(flow.shape)))
+        image = mx.nd.concat(rgb, flow, dim=-1)
+        if self.transform is not None:
+            image = self.transform(image)
+        return image, np.int32(index)
+
+    def feature_output_path(self, index):
+        video, frame, _ = self.samples[int(index)]
+        return feature_path(self.feature_dir, video, int(frame))
+
+    @property
+    def videos(self):
+        return sorted({str(sample[0]) for sample in self.samples})
+
+    def __str__(self):
+        return 'TennisTwoStreamFrameSet(model_id={}, split={}, videos={}, frames={})'.format(
+            self.model_id, self.split, ','.join(self.videos), len(self))
 
 
 class TennisFeatureSequenceSet(Dataset):

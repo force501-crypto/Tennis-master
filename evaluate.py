@@ -42,7 +42,7 @@ flags.DEFINE_integer('num_gpus', 1, 'Number of GPUs; zero forces CPU.')
 flags.DEFINE_integer('num_workers', -1, 'DataLoader workers; -1 chooses up to eight.')
 flags.DEFINE_integer('seed', 42, 'Random seed.')
 flags.DEFINE_string('params_file', None,
-                    'Explicit checkpoint path; defaults to best score in model_id.')
+                    'MS-TCN checkpoint; defaults to experiments/0010/mstcn.')
 flags.DEFINE_bool('save_predictions', True,
                   'Write an analyze_predictions.py compatible NPZ file.')
 flags.DEFINE_string('predictions_file', None, 'Optional prediction output path.')
@@ -53,7 +53,7 @@ flags.DEFINE_bool('export_clips', True,
 flags.DEFINE_string('video_file', None,
                     'Source V006 MP4; defaults to data/videos/V006.mp4.')
 flags.DEFINE_string('clips_output_dir', None,
-                    'Clip directory; defaults to experiment/class_clips/V006.')
+                    'Clip directory; defaults to experiment/0010/mstcn/class_clips/V006.')
 flags.DEFINE_enum('clip_output_mode', 'per_class', ['per_class', 'per_event'],
                   'Write one MP4 per class or one MP4 per detected event.')
 flags.DEFINE_string('background_class', 'OTH', 'Class excluded from clips.')
@@ -105,11 +105,11 @@ def main(_argv):
     model.initialize(ctx=contexts)
 
     experiment_dir = os.path.join(
-        'models', 'vision', 'experiments', model_id)
+        'models', 'vision', 'experiments', model_id, 'mstcn')
     checkpoint = FLAGS.params_file or find_best_checkpoint(experiment_dir)
     if checkpoint is None or not os.path.exists(checkpoint):
         raise FileNotFoundError(
-            'No checkpoint found for MS-TCN experiment {}'.format(FLAGS.model_id))
+            'No MS-TCN checkpoint found under {}'.format(experiment_dir))
     model.load_parameters(checkpoint, ctx=contexts)
     model.hybridize()
     print('Loaded MS-TCN parameters: {}'.format(checkpoint))
