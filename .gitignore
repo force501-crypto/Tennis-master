@@ -17,5 +17,8 @@ models/vision/experiments/
 # Logs
 *.log
 
+# Local safety backups created before isolated model experiments
+.local_backups/
+
 # IDE
 .idea/
