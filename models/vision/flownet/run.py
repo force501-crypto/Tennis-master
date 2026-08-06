@@ -3,7 +3,6 @@ import glob
 import mxnet as mx
 import numpy as np
 import os
-from scipy.misc import imresize
 from tqdm import tqdm
 
 from models.vision.flownet.model import get_flownet
@@ -43,12 +42,16 @@ def process_two_images(model, files, ctx=None):
     flow = flow.squeeze()
     flow = flow.transpose(1, 2, 0)
     img = flow_to_image(flow)
-    img = imresize(img, 4.0)  # doing the bilinear interpolation on the img, NOT on flow cause was too hard :'(
+    # scipy.misc.imresize was removed from modern SciPy. Resize the visualized
+    # flow (not the raw flow field) with OpenCV's bilinear interpolation.
+    img = cv2.resize(
+        img, None, fx=4.0, fy=4.0, interpolation=cv2.INTER_LINEAR)
 
     return img, flow
 
 
-def process_imagedir(model, input_dir, output_dir=None, ctx=None):
+def process_imagedir(model, input_dir, output_dir=None, ctx=None,
+                     overwrite=False):
     """
     Process a directory of images
     Args:
@@ -71,7 +74,6 @@ def process_imagedir(model, input_dir, output_dir=None, ctx=None):
     files.sort()
 
     for i in tqdm(range(1, len(files)), desc='Calculating Flow'):
-        img, flow = process_two_images(model, files[i-1:i+1], ctx)
         dir, file = os.path.split(files[i])
         if int(file[:-4]) == 0:  # skip first frame of any video (assume numbered 0s)
             continue
@@ -80,8 +82,14 @@ def process_imagedir(model, input_dir, output_dir=None, ctx=None):
             output_dir = 'flow'
         output_path = dir.replace(input_dir, output_dir)  # this keeps the recursive dir structure
 
+        output_file = os.path.join(output_path, file)
+        if os.path.exists(output_file) and not overwrite:
+            continue
+
+        img, flow = process_two_images(model, files[i-1:i+1], ctx)
+
         os.makedirs(output_path, exist_ok=True)
-        cv2.imwrite(os.path.join(output_path, file), cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+        cv2.imwrite(output_file, cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
 
     return output_path
 

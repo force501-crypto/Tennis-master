@@ -19,6 +19,27 @@ models/vision/experiments/0010/0008.params
 models/vision/experiments/0010/scores.txt
 ```
 
+Because model 0010 was trained with `flow=twos`, optical-flow JPEG files must
+exist under `data/flow/V006.mp4` through `V010.mp4`. If they are absent,
+download the author-provided `FlowNet2-S_checkpoint.params`:
+
+```bash
+python -m pip install gdown
+mkdir -p flownet
+python -m gdown 1wA3lPxSPc4rKQoz6-8Pr077MulnHx0Sf \
+  -O flownet/FlowNet2-S_checkpoint.params
+```
+
+Then generate the flow frames:
+
+```bash
+python prepare_flow.py \
+  --videos V006,V007,V008,V009,V010 \
+  --gpu_id 0
+```
+
+Existing flow JPEG files are skipped, so this command can be restarted safely.
+
 `prepare_features.py` uses its RGB and optical-flow DenseNet backbones to write:
 
 ```text

@@ -1,6 +1,4 @@
 import numpy as np
-import matplotlib.colors as cl
-import matplotlib.pyplot as plt
 
 UNKNOWN_FLOW_THRESH = 1e7
 
@@ -174,6 +172,11 @@ def visualize_flow(flow, mode='Y'):
     :param mode: choose which color mode to visualize the flow (Y: Ccbcr, RGB: RGB color)
     :return: None
     """
+    # Plotting is optional; keep matplotlib out of the normal flow-generation
+    # dependency path used on the Ubuntu training server.
+    import matplotlib.colors as cl
+    import matplotlib.pyplot as plt
+
     if mode == 'Y':
         # Ccbcr color wheel
         img = flow_to_image(flow)

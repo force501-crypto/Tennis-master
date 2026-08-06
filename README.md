@@ -6,6 +6,7 @@ This workspace uses a single MS-TCN pipeline for model `0010`.
 train.py                 train MS-TCN 0010
 evaluate.py              evaluate only V006 and automatically export clips
 prepare_features.py      extract RGB + flow features from frame model 0010
+prepare_flow.py          regenerate missing optical-flow frames with FlowNet-S
 dataset.py               load model 0010 feature sequences
 models/vision/mstcn.py   MS-TCN++ temporal network
 mstcn_utils.py           loss, metrics, and checkpoint helpers
