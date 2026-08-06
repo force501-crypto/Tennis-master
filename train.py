@@ -1,4 +1,4 @@
-"""Train the unified MS-TCN model 0010 pipeline."""
+"""Train MS-TCN with RGB features extracted from frame model 0006."""
 from absl import app, flags
 from absl.flags import FLAGS
 import logging
@@ -21,10 +21,10 @@ from mstcn_utils import (
 from utils.losses import get_class_weights
 
 
-flags.DEFINE_string('model_id', '0010', 'MS-TCN model and feature id.')
+flags.DEFINE_string('model_id', DEFAULT_MODEL_ID, 'MS-TCN model and RGB feature id.')
 flags.DEFINE_string('data_root', 'data', 'Dataset root.')
 flags.DEFINE_string('experiment_dir', None,
-                    'MS-TCN checkpoint directory; defaults to experiments/0010/mstcn.')
+                    'MS-TCN checkpoint directory; defaults to experiments/0006/mstcn.')
 flags.DEFINE_string('split_id', '02', 'Dataset split id.')
 flags.DEFINE_string('test_split', 'test_006_full',
                     'Final evaluation split; defaults to the full V006 test split.')
@@ -288,7 +288,7 @@ def _evaluate_epoch(model, loader, class_names, class_weights, contexts):
 
 def _validate_flags():
     if normalize_model_id(FLAGS.model_id) != DEFAULT_MODEL_ID:
-        raise ValueError('This unified trainer only supports model 0010')
+        raise ValueError('This unified trainer only supports RGB model 0006')
     if FLAGS.sequence_length < 2:
         raise ValueError('sequence_length must be at least two')
     if FLAGS.train_stride < 1:

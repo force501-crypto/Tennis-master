@@ -1,4 +1,4 @@
-"""Extract RGB + optical-flow features from frame model 0010 for MS-TCN."""
+"""Extract RGB features from frame model 0006 for MS-TCN."""
 import os
 
 os.environ.setdefault('MXNET_CUDNN_AUTOTUNE_DEFAULT', '0')
@@ -14,22 +14,20 @@ from mxnet.gluon.data.vision import transforms
 from gluoncv.model_zoo import get_model
 from tqdm import tqdm
 
-from dataset import (
-    DEFAULT_MODEL_ID, TennisTwoStreamFrameSet, normalize_model_id)
-from models.vision.definitions import TwoStreamModel
+from dataset import DEFAULT_MODEL_ID, TennisRGBFrameSet, normalize_model_id
+from models.vision.definitions import FrameModel
 from mstcn_utils import find_best_checkpoint
-from utils.transforms import TwoStreamNormalize
 
 
-flags.DEFINE_string('model_id', '0010', 'Frame model and feature id.')
+flags.DEFINE_string('model_id', DEFAULT_MODEL_ID, 'RGB frame model and feature id.')
 flags.DEFINE_list(
     'splits', 'train,val,test_006_full',
-    'Splits whose model 0010 features are generated.')
+    'Splits whose model 0006 RGB features are generated.')
 flags.DEFINE_string('split_id', '02', 'Dataset split id.')
 flags.DEFINE_string('data_root', 'data', 'Dataset root.')
 flags.DEFINE_string('backbone', 'DenseNet121', 'Frame model backbone.')
 flags.DEFINE_string('params_file', None,
-                    'Frame checkpoint; defaults to best checkpoint in 0010 root.')
+                    'Frame checkpoint; defaults to best checkpoint in 0006 root.')
 flags.DEFINE_integer('data_shape', 512, 'Input center-crop size.')
 flags.DEFINE_integer('batch_size', 8, 'Feature extraction batch size.')
 flags.DEFINE_integer('num_gpus', 1, 'Number of GPUs; zero forces CPU.')
@@ -50,10 +48,13 @@ def main(_argv):
     transform = transforms.Compose([
         transforms.Resize(FLAGS.data_shape + 32),
         transforms.CenterCrop(FLAGS.data_shape),
-        TwoStreamNormalize(),
+        transforms.ToTensor(),
+        transforms.Normalize(
+            [0.485, 0.456, 0.406],
+            [0.229, 0.224, 0.225]),
     ])
     datasets = [
-        TennisTwoStreamFrameSet(
+        TennisRGBFrameSet(
             root=FLAGS.data_root, split=split, split_id=FLAGS.split_id,
             model_id=model_id, transform=transform)
         for split in FLAGS.splits
@@ -71,7 +72,7 @@ def main(_argv):
             'No frame checkpoint found for model {}'.format(model_id))
     model.load_parameters(checkpoint, ctx=contexts)
     model.hybridize()
-    print('Loaded model {} two-stream frame parameters: {}'.format(
+    print('Loaded model {} RGB frame parameters: {}'.format(
         model_id, checkpoint))
     print('Feature output root: {}'.format(os.path.join(
         FLAGS.data_root, 'features', model_id)))
@@ -94,28 +95,21 @@ def main(_argv):
 
 
 def _build_frame_model(class_count, contexts):
-    rgb_backbone = get_model(FLAGS.backbone, pretrained=False).features
-    flow_backbone = get_model(FLAGS.backbone, pretrained=False).features
-    model = TwoStreamModel(rgb_backbone, flow_backbone, class_count)
+    backbone = get_model(FLAGS.backbone, pretrained=False).features
+    model = FrameModel(backbone, class_count)
     model.initialize(ctx=contexts)
     dummy = mx.nd.zeros(
-        (1, 6, FLAGS.data_shape, FLAGS.data_shape), ctx=contexts[0])
+        (1, 3, FLAGS.data_shape, FLAGS.data_shape), ctx=contexts[0])
     model(dummy)
     return model
 
 
-def _pooled_two_stream_features(model, data):
-    rgb = mx.nd.slice_axis(data, axis=1, begin=0, end=3)
-    flow = mx.nd.slice_axis(data, axis=1, begin=3, end=6)
-    rgb_features = model.features_rgb(rgb)
-    flow_features = model.features_flow(flow)
-    if len(rgb_features.shape) > 2:
-        axes = tuple(range(2, len(rgb_features.shape)))
-        rgb_features = rgb_features.mean(axis=axes)
-        flow_features = flow_features.mean(axis=axes)
-    rgb_features = rgb_features.reshape((0, -1))
-    flow_features = flow_features.reshape((0, -1))
-    return mx.nd.concat(rgb_features, flow_features, dim=1)
+def _pooled_rgb_features(model, data):
+    features = model.backbone(data)
+    if len(features.shape) > 2:
+        axes = tuple(range(2, len(features.shape)))
+        features = features.mean(axis=axes)
+    return features.reshape((0, -1))
 
 
 def _extract_split(model, loader, dataset, contexts, overwrite):
@@ -133,7 +127,7 @@ def _extract_split(model, loader, dataset, contexts, overwrite):
         index_parts = gluon.utils.split_and_load(
             batch[1], ctx_list=contexts, batch_axis=0, even_split=False)
         for data, part_indices in zip(data_parts, index_parts):
-            features = _pooled_two_stream_features(model, data).asnumpy()
+            features = _pooled_rgb_features(model, data).asnumpy()
             part_indices = part_indices.asnumpy().astype(np.int64)
             for feature, index in zip(features, part_indices):
                 path = dataset.feature_output_path(index)
@@ -148,7 +142,7 @@ def _extract_split(model, loader, dataset, contexts, overwrite):
 
 def _validate_flags():
     if normalize_model_id(FLAGS.model_id) != DEFAULT_MODEL_ID:
-        raise ValueError('Feature extraction only supports model 0010')
+        raise ValueError('Feature extraction only supports RGB model 0006')
     if not FLAGS.splits:
         raise ValueError('At least one split is required')
     if FLAGS.data_shape < 32:

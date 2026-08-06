@@ -1,4 +1,4 @@
-"""MS-TCN feature-sequence dataset for the unified 0010 pipeline."""
+"""RGB frame and MS-TCN feature datasets for the unified 0006 pipeline."""
 from collections import defaultdict
 import os
 
@@ -7,7 +7,7 @@ import numpy as np
 from mxnet.gluon.data import Dataset
 
 
-DEFAULT_MODEL_ID = '0010'
+DEFAULT_MODEL_ID = '0006'
 
 
 def normalize_model_id(model_id):
@@ -27,7 +27,7 @@ def feature_path(feature_dir, video, frame, chunk_size=1000):
 
 
 def image_path(image_dir, video, frame, chunk_size=1000):
-    """Return an extracted RGB/flow image path for one source frame."""
+    """Return an extracted RGB image path for one source frame."""
     chunk = int(frame / chunk_size) * chunk_size
     return os.path.join(
         image_dir, '{}.mp4'.format(video), '{:010d}'.format(chunk),
@@ -134,8 +134,8 @@ def load_split_samples(root, split_id, split, classes, video_id=None):
     return samples
 
 
-class TennisTwoStreamFrameSet(Dataset):
-    """RGB + optical-flow frames used to create model 0010 features."""
+class TennisRGBFrameSet(Dataset):
+    """RGB frames used to create model 0006 features."""
 
     def __init__(self, split, transform, model_id=DEFAULT_MODEL_ID,
                  split_id='02', root='data', video_id=None):
@@ -147,7 +147,6 @@ class TennisTwoStreamFrameSet(Dataset):
         self.samples = load_split_samples(
             root, split_id, split, self.classes, video_id=video_id)
         self.frames_dir = os.path.join(root, 'frames')
-        self.flow_dir = os.path.join(root, 'flow')
         self.feature_dir = os.path.join(root, 'features', self.model_id)
 
     def __len__(self):
@@ -156,21 +155,10 @@ class TennisTwoStreamFrameSet(Dataset):
     def __getitem__(self, index):
         video, frame, _ = self.samples[index]
         rgb_path = image_path(self.frames_dir, video, frame)
-        flow_path = image_path(self.flow_dir, video, frame)
         if not os.path.exists(rgb_path):
             raise FileNotFoundError('RGB frame does not exist: {}'.format(rgb_path))
-        if not os.path.exists(flow_path):
-            raise FileNotFoundError('Flow frame does not exist: {}'.format(flow_path))
 
-        rgb = mx.image.imread(rgb_path, 1)
-        flow = mx.image.imread(flow_path, 1)
-        if int(rgb.shape[0]) == int(flow.shape[0]) + 16:
-            rgb = rgb[8:-8, :, :]
-        if tuple(rgb.shape[:2]) != tuple(flow.shape[:2]):
-            raise ValueError(
-                'RGB/flow dimensions differ at {}: {} versus {}'.format(
-                    video, tuple(rgb.shape), tuple(flow.shape)))
-        image = mx.nd.concat(rgb, flow, dim=-1)
+        image = mx.image.imread(rgb_path, 1)
         if self.transform is not None:
             image = self.transform(image)
         return image, np.int32(index)
@@ -184,12 +172,12 @@ class TennisTwoStreamFrameSet(Dataset):
         return sorted({str(sample[0]) for sample in self.samples})
 
     def __str__(self):
-        return 'TennisTwoStreamFrameSet(model_id={}, split={}, videos={}, frames={})'.format(
+        return 'TennisRGBFrameSet(model_id={}, split={}, videos={}, frames={})'.format(
             self.model_id, self.split, ','.join(self.videos), len(self))
 
 
 class TennisFeatureSequenceSet(Dataset):
-    """Fixed-length MS-TCN sequences backed by model 0010 features.
+    """Fixed-length MS-TCN sequences backed by model 0006 RGB features.
 
     Features are read from ``data/features/<model_id>``. Sequences never cross
     a video boundary or a gap in the split file. Short tails are zero padded
@@ -241,8 +229,8 @@ class TennisFeatureSequenceSet(Dataset):
             self.feature_dir, first[0], int(first[1]))
         if not os.path.exists(first_path):
             raise FileNotFoundError(
-                'Model {} feature does not exist: {}. MS-TCN 0010 requires '
-                'features under data/features/0010.'.format(
+                'Model {} RGB feature does not exist: {}. Run '
+                'prepare_features.py before MS-TCN training or evaluation.'.format(
                     self.model_id, first_path))
         first_feature = np.load(first_path)
         self.raw_feature_shape = tuple(first_feature.shape)

@@ -1,4 +1,4 @@
-"""Evaluate MS-TCN model 0010 on V006 and export class-separated clips."""
+"""Evaluate the model 0006 RGB MS-TCN on V006 and export class clips."""
 from absl import app, flags
 from absl.flags import FLAGS
 import multiprocessing
@@ -17,7 +17,7 @@ from export_class_clips import export_video_clips
 from mstcn_utils import confusion_metrics, final_stage, find_best_checkpoint
 
 
-flags.DEFINE_string('model_id', '0010', 'MS-TCN model and feature id.')
+flags.DEFINE_string('model_id', DEFAULT_MODEL_ID, 'MS-TCN model and RGB feature id.')
 flags.DEFINE_string('data_root', 'data', 'Dataset root.')
 flags.DEFINE_string('split_id', '02', 'Dataset split id.')
 flags.DEFINE_string('split', 'test_006_full',
@@ -42,7 +42,7 @@ flags.DEFINE_integer('num_gpus', 1, 'Number of GPUs; zero forces CPU.')
 flags.DEFINE_integer('num_workers', -1, 'DataLoader workers; -1 chooses up to eight.')
 flags.DEFINE_integer('seed', 42, 'Random seed.')
 flags.DEFINE_string('params_file', None,
-                    'MS-TCN checkpoint; defaults to experiments/0010/mstcn.')
+                    'MS-TCN checkpoint; defaults to experiments/0006/mstcn.')
 flags.DEFINE_bool('save_predictions', True,
                   'Write an analyze_predictions.py compatible NPZ file.')
 flags.DEFINE_string('predictions_file', None, 'Optional prediction output path.')
@@ -53,7 +53,7 @@ flags.DEFINE_bool('export_clips', True,
 flags.DEFINE_string('video_file', None,
                     'Source V006 MP4; defaults to data/videos/V006.mp4.')
 flags.DEFINE_string('clips_output_dir', None,
-                    'Clip directory; defaults to experiment/0010/mstcn/class_clips/V006.')
+                    'Clip directory; defaults to experiment/0006/mstcn/class_clips/V006.')
 flags.DEFINE_enum('clip_output_mode', 'per_class', ['per_class', 'per_event'],
                   'Write one MP4 per class or one MP4 per detected event.')
 flags.DEFINE_string('background_class', 'OTH', 'Class excluded from clips.')
@@ -247,7 +247,7 @@ def _save_predictions(output_path, arrays, compressed):
 
 def _validate_flags():
     if normalize_model_id(FLAGS.model_id) != DEFAULT_MODEL_ID:
-        raise ValueError('This unified evaluator only supports model 0010')
+        raise ValueError('This unified evaluator only supports RGB model 0006')
     if FLAGS.sequence_length < 2:
         raise ValueError('sequence_length must be at least two')
     if FLAGS.sequence_stride < 1:
