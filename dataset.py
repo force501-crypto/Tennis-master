@@ -34,6 +34,32 @@ def image_path(image_dir, video, frame, chunk_size=1000):
         '{:010d}.jpg'.format(frame))
 
 
+def load_video_frame_samples(root, video_id):
+    """Discover every extracted JPEG frame for one video, without labels."""
+    video = str(video_id)
+    video_dir = os.path.join(root, 'frames', '{}.mp4'.format(video))
+    if not os.path.isdir(video_dir):
+        raise FileNotFoundError(
+            'Extracted frame directory does not exist: {}'.format(video_dir))
+
+    frames = []
+    for directory, _, filenames in os.walk(video_dir):
+        for filename in filenames:
+            if not filename.lower().endswith('.jpg'):
+                continue
+            stem = os.path.splitext(filename)[0]
+            if not stem.isdigit():
+                raise ValueError(
+                    'RGB frame filename is not numeric: {}'.format(
+                        os.path.join(directory, filename)))
+            frames.append(int(stem))
+    if not frames:
+        raise ValueError('No RGB JPEG frames found under {}'.format(video_dir))
+    if len(frames) != len(set(frames)):
+        raise ValueError('Duplicate RGB frame numbers found under {}'.format(video_dir))
+    return [[video, frame, None] for frame in sorted(frames)]
+
+
 def build_contiguous_runs(samples, frame_step=1):
     """Group ``[video, frame, label]`` samples into contiguous video runs."""
     if frame_step < 1:
@@ -138,14 +164,21 @@ class TennisRGBFrameSet(Dataset):
     """RGB frames used to create model 0006 features."""
 
     def __init__(self, split, transform, model_id=DEFAULT_MODEL_ID,
-                 split_id='02', root='data', video_id=None):
+                 split_id='02', root='data', video_id=None,
+                 full_video=False):
         self.root = root
-        self.split = split
+        self.full_video = bool(full_video)
+        self.split = 'full_{}'.format(video_id) if self.full_video else split
         self.model_id = normalize_model_id(model_id)
         self.transform = transform
         self.classes = load_classes(root)
-        self.samples = load_split_samples(
-            root, split_id, split, self.classes, video_id=video_id)
+        if self.full_video:
+            if not video_id:
+                raise ValueError('video_id is required for full-video features')
+            self.samples = load_video_frame_samples(root, video_id)
+        else:
+            self.samples = load_split_samples(
+                root, split_id, split, self.classes, video_id=video_id)
         self.frames_dir = os.path.join(root, 'frames')
         self.feature_dir = os.path.join(root, 'features', self.model_id)
 
@@ -186,7 +219,8 @@ class TennisFeatureSequenceSet(Dataset):
 
     def __init__(self, split, model_id=DEFAULT_MODEL_ID, split_id='02',
                  root='data', sequence_length=256, sequence_stride=None,
-                 frame_step=1, feature_pool='mean', video_id=None):
+                 frame_step=1, feature_pool='mean', video_id=None,
+                 full_video=False):
         if sequence_length < 2:
             raise ValueError('sequence_length must be at least two')
         if sequence_stride is None:
@@ -201,7 +235,8 @@ class TennisFeatureSequenceSet(Dataset):
             raise ValueError('feature_pool must be mean or flatten')
 
         self.root = root
-        self.split = split
+        self.full_video = bool(full_video)
+        self.split = 'full_{}'.format(video_id) if self.full_video else split
         self.model_id = normalize_model_id(model_id)
         self.video_id = str(video_id) if video_id else None
         self.sequence_length = int(sequence_length)
@@ -210,8 +245,13 @@ class TennisFeatureSequenceSet(Dataset):
         self.feature_pool = feature_pool
         self.classes = load_classes(root)
         self.feature_dir = os.path.join(root, 'features', self.model_id)
-        self._samples = load_split_samples(
-            root, split_id, split, self.classes, video_id=self.video_id)
+        if self.full_video:
+            if not self.video_id:
+                raise ValueError('video_id is required for full-video inference')
+            self._samples = load_video_frame_samples(root, self.video_id)
+        else:
+            self._samples = load_split_samples(
+                root, split_id, split, self.classes, video_id=self.video_id)
 
         self._runs = build_contiguous_runs(
             self._samples, frame_step=self.frame_step)
@@ -261,21 +301,24 @@ class TennisFeatureSequenceSet(Dataset):
                     'Feature size changed from {} to {} at {}'.format(
                         self.feature_size, feature.size, path))
             features[time_index] = feature
-            labels[time_index] = self.classes.index(class_name)
+            if class_name is not None:
+                labels[time_index] = self.classes.index(class_name)
             mask[time_index] = 1.0
         return features, labels, mask, np.int32(index)
 
     def sequence_metadata(self, index):
         sequence = self._sequences[int(index)]
         return [
-            (str(sample[0]), int(sample[1]), self.classes.index(sample[2]))
+            (str(sample[0]), int(sample[1]),
+             -1 if sample[2] is None else self.classes.index(sample[2]))
             for sample in sequence
         ]
 
     def class_counts(self):
         counts = [0] * len(self.classes)
         for sample in self._samples:
-            counts[self.classes.index(sample[2])] += 1
+            if sample[2] is not None:
+                counts[self.classes.index(sample[2])] += 1
         return counts
 
     @property

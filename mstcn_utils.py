@@ -137,7 +137,9 @@ def find_best_checkpoint(experiment_dir):
                 if len(fields) < 2:
                     continue
                 try:
-                    scored_epochs.append((float(fields[1]), int(fields[0])))
+                    score = float(fields[1])
+                    if np.isfinite(score):
+                        scored_epochs.append((score, int(fields[0])))
                 except ValueError:
                     continue
     if scored_epochs:
@@ -168,4 +170,3 @@ def _numeric_checkpoints(experiment_dir):
 
 def _safe_divide(numerator, denominator):
     return float(numerator) / float(denominator) if denominator else 0.0
-

@@ -23,6 +23,12 @@ flags.DEFINE_string('model_id', DEFAULT_MODEL_ID, 'RGB frame model and feature i
 flags.DEFINE_list(
     'splits', 'train,val,test_006_full',
     'Splits whose model 0006 RGB features are generated.')
+flags.DEFINE_string(
+    'full_video_id', None,
+    'Also extract every RGB frame for this video, without requiring labels.')
+flags.DEFINE_bool(
+    'full_video_only', False,
+    'Ignore --splits and only prepare --full_video_id.')
 flags.DEFINE_string('split_id', '02', 'Dataset split id.')
 flags.DEFINE_string('data_root', 'data', 'Dataset root.')
 flags.DEFINE_string('backbone', 'DenseNet121', 'Frame model backbone.')
@@ -53,12 +59,19 @@ def main(_argv):
             [0.485, 0.456, 0.406],
             [0.229, 0.224, 0.225]),
     ])
+    split_names = [] if FLAGS.full_video_only else [
+        split for split in FLAGS.splits if split]
     datasets = [
         TennisRGBFrameSet(
             root=FLAGS.data_root, split=split, split_id=FLAGS.split_id,
             model_id=model_id, transform=transform)
-        for split in FLAGS.splits
+        for split in split_names
     ]
+    if FLAGS.full_video_id:
+        datasets.append(TennisRGBFrameSet(
+            root=FLAGS.data_root, split='full_video',
+            video_id=FLAGS.full_video_id, full_video=True,
+            model_id=model_id, transform=transform))
     classes = datasets[0].classes
     if any(dataset.classes != classes for dataset in datasets[1:]):
         raise ValueError('Class definitions differ between feature splits')
@@ -143,8 +156,10 @@ def _extract_split(model, loader, dataset, contexts, overwrite):
 def _validate_flags():
     if normalize_model_id(FLAGS.model_id) != DEFAULT_MODEL_ID:
         raise ValueError('Feature extraction only supports RGB model 0006')
-    if not FLAGS.splits:
-        raise ValueError('At least one split is required')
+    if FLAGS.full_video_only and not FLAGS.full_video_id:
+        raise ValueError('--full_video_only requires --full_video_id')
+    if not FLAGS.full_video_only and not FLAGS.splits and not FLAGS.full_video_id:
+        raise ValueError('At least one split or --full_video_id is required')
     if FLAGS.data_shape < 32:
         raise ValueError('data_shape must be at least 32')
     if FLAGS.batch_size < 1:

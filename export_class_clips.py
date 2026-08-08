@@ -219,7 +219,8 @@ def export_video_clips(predictions_file, video_id='V006', data_root='data',
                        frame_step=None, min_event_frames=1,
                        padding_frames=0, codec='mp4v'):
     """Export one video's foreground clips for CLI and evaluate.py callers."""
-    data = select_video(load_predictions(predictions_file), video_id)
+    data = select_video(
+        load_predictions(predictions_file, allow_unlabeled=True), video_id)
     events, frame_step = build_events(
         data, background_class, frame_step, min_event_frames)
     if not events:

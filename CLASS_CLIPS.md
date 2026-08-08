@@ -1,13 +1,14 @@
 # V006 class-separated video output
 
-`evaluate.py` performs the final model `0006` RGB MS-TCN workflow:
+`evaluate.py` performs the complete-video model `0006` RGB MS-TCN workflow:
 
 1. Load the best MS-TCN checkpoint from
    `models/vision/experiments/0006/mstcn/`.
-2. Read only `V006` feature sequences from `data/features/0006/`.
-3. Save predictions to `predictions_V006.npz`.
-4. Remove every `OTH` interval.
-5. Write a separate chronological MP4 for each detected foreground class.
+2. Discover every V006 frame directly under `data/frames/V006.mp4/`.
+3. Read the corresponding features from `data/features/0006/`.
+4. Save predictions to `predictions_V006_full.npz`.
+5. Remove every `OTH` interval.
+6. Write a separate chronological MP4 for each detected foreground class.
 
 Run:
 
@@ -20,7 +21,7 @@ python evaluate.py --model_id 0006 --num_gpus 1
 Output is written to:
 
 ```text
-models/vision/experiments/0006/mstcn/class_clips/V006/
+models/vision/experiments/0006/mstcn/class_clips/V006_full/
 ```
 
 `manifest.csv` records the source frame interval, predicted class, confidence,
@@ -32,7 +33,7 @@ already exists:
 
 ```bash
 python export_class_clips.py \
-  models/vision/experiments/0006/mstcn/predictions_V006.npz \
+  models/vision/experiments/0006/mstcn/predictions_V006_full.npz \
   --video-id V006 \
-  --output-dir models/vision/experiments/0006/mstcn/class_clips/V006
+  --output-dir models/vision/experiments/0006/mstcn/class_clips/V006_full
 ```

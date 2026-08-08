@@ -21,9 +21,12 @@ flags.DEFINE_string('model_id', DEFAULT_MODEL_ID, 'MS-TCN model and RGB feature 
 flags.DEFINE_string('data_root', 'data', 'Dataset root.')
 flags.DEFINE_string('split_id', '02', 'Dataset split id.')
 flags.DEFINE_string('split', 'test_006_full',
-                    'V006 split to evaluate (default: test_006_full).')
+                    'Labeled V006 split used when --nofull_video is set.')
 flags.DEFINE_string('video_id', 'V006',
                     'Only this video is evaluated and clipped.')
+flags.DEFINE_bool(
+    'full_video', True,
+    'Run label-free inference over every extracted V006 frame.')
 flags.DEFINE_integer('sequence_length', 256, 'Frames per evaluation sequence.')
 flags.DEFINE_integer('sequence_stride', 256,
                      'Evaluation stride; overlap is averaged when smaller than length.')
@@ -53,7 +56,7 @@ flags.DEFINE_bool('export_clips', True,
 flags.DEFINE_string('video_file', None,
                     'Source V006 MP4; defaults to data/videos/V006.mp4.')
 flags.DEFINE_string('clips_output_dir', None,
-                    'Clip directory; defaults to experiment/0006/mstcn/class_clips/V006.')
+                    'Clip directory; full-video default ends in class_clips/V006_full.')
 flags.DEFINE_enum('clip_output_mode', 'per_class', ['per_class', 'per_event'],
                   'Write one MP4 per class or one MP4 per detected event.')
 flags.DEFINE_string('background_class', 'OTH', 'Class excluded from clips.')
@@ -83,7 +86,7 @@ def main(_argv):
         video_id=FLAGS.video_id,
         split_id=FLAGS.split_id, sequence_length=FLAGS.sequence_length,
         sequence_stride=FLAGS.sequence_stride, frame_step=FLAGS.frame_step,
-        feature_pool=FLAGS.feature_pool)
+        feature_pool=FLAGS.feature_pool, full_video=FLAGS.full_video)
     if dataset.videos != [FLAGS.video_id]:
         raise ValueError(
             'Evaluation must contain only {} but found {}'.format(
@@ -119,34 +122,42 @@ def main(_argv):
     elapsed = time.time() - start
     arrays = _records_to_arrays(records, dataset.classes)
 
-    confusion = np.zeros(
-        (len(dataset.classes), len(dataset.classes)), dtype=np.int64)
-    np.add.at(confusion, (arrays['labels'], arrays['predictions']), 1)
-    metrics, per_class = confusion_metrics(confusion, dataset.classes)
-    print('Confusion matrix (ground truth rows, prediction columns):')
-    print(confusion)
-    print('Accuracy={:.4f}, Macro F1={:.4f}, Foreground Macro F1={:.4f}'.format(
-        metrics['accuracy'], metrics['macro_f1'],
-        metrics['foreground_macro_f1']))
-    for row in per_class:
-        print('{class_name}: precision={precision:.4f}, recall={recall:.4f}, '
-              'f1={f1:.4f}, support={support}'.format(**row))
-    print('Evaluated {} unique frames in {:.1f} seconds'.format(
+    labeled = arrays['labels'] >= 0
+    if np.any(labeled):
+        confusion = np.zeros(
+            (len(dataset.classes), len(dataset.classes)), dtype=np.int64)
+        np.add.at(
+            confusion,
+            (arrays['labels'][labeled], arrays['predictions'][labeled]), 1)
+        metrics, per_class = confusion_metrics(confusion, dataset.classes)
+        print('Confusion matrix (ground truth rows, prediction columns):')
+        print(confusion)
+        print('Accuracy={:.4f}, Macro F1={:.4f}, Foreground Macro F1={:.4f}'.format(
+            metrics['accuracy'], metrics['macro_f1'],
+            metrics['foreground_macro_f1']))
+        for row in per_class:
+            print('{class_name}: precision={precision:.4f}, recall={recall:.4f}, '
+                  'f1={f1:.4f}, support={support}'.format(**row))
+    else:
+        print('Full-video inference has no ground-truth labels; metrics skipped.')
+    print('Predicted {} unique frames in {:.1f} seconds'.format(
         len(arrays['frames']), elapsed))
 
     if FLAGS.save_predictions or FLAGS.predictions_file:
         output_path = FLAGS.predictions_file
         if output_path is None:
+            suffix = '{}_full'.format(FLAGS.video_id) if FLAGS.full_video else FLAGS.video_id
             output_path = os.path.join(
-                experiment_dir, 'predictions_{}.npz'.format(FLAGS.video_id))
+                experiment_dir, 'predictions_{}.npz'.format(suffix))
         _save_predictions(output_path, arrays, FLAGS.compress_predictions)
         print('Saved {} predictions to {} ({})'.format(
             len(arrays['frames']), output_path,
             'compressed' if FLAGS.compress_predictions else 'uncompressed'))
 
         if FLAGS.export_clips:
+            clip_name = '{}_full'.format(FLAGS.video_id) if FLAGS.full_video else FLAGS.video_id
             clips_output_dir = FLAGS.clips_output_dir or os.path.join(
-                experiment_dir, 'class_clips', FLAGS.video_id)
+                experiment_dir, 'class_clips', clip_name)
             export_video_clips(
                 predictions_file=output_path,
                 video_id=FLAGS.video_id,

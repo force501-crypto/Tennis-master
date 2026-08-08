@@ -3,10 +3,12 @@
 The project has one feature-preparation step, one training entry point, and one
 evaluation entry point:
 
-- `prepare_features.py` loads the existing RGB DenseNet121 frame model `0006`.
+- `prepare_features.py` loads the existing RGB DenseNet121 frame model `0006`
+  and can scan every extracted V006 frame without using a split file.
 - `train.py` trains MS-TCN with model `0006` RGB features.
-- `evaluate.py` evaluates only `V006`, saves predictions, removes `OTH`, and
-  exports every detected foreground class to a separate MP4.
+- `evaluate.py` scans the complete extracted V006 video by default, saves
+  predictions, removes `OTH`, and exports every detected foreground class to a
+  separate MP4.
 
 All three entry points use `0006` by default and reject other model IDs. No
 optical-flow directory, FlowNet code, or FlowNet checkpoint is used.
@@ -35,6 +37,10 @@ Feature preparation writes one pooled DenseNet feature per frame:
 ```text
 data/features/0006/V006.mp4/<chunk>/<frame>.npy
 ```
+
+Full-video feature preparation discovers frame numbers directly under
+`data/frames/V006.mp4/`. It does not require those frames to appear in
+`train.txt`, `val.txt`, `test.txt`, or `test_006_full.txt`.
 
 The new temporal parameters are stored separately from `0015.params`:
 
@@ -65,6 +71,16 @@ Existing `.npy` features are skipped. An interrupted extraction can therefore
 be restarted with the same command. Use `--overwrite` only when deliberately
 replacing all existing `0006` features.
 
+To supplement the complete V006 video while skipping every existing feature:
+
+```bash
+python prepare_features.py \
+  --model_id 0006 \
+  --full_video_id V006 \
+  --full_video_only \
+  --num_gpus 1
+```
+
 ## 2. Train MS-TCN
 
 ```bash
@@ -77,7 +93,7 @@ Training uses the normal `train` and `val` splits. Its final check uses only
 `V006` from `test_006_full`. Numeric checkpoints are written beneath
 `models/vision/experiments/0006/mstcn/`.
 
-## 3. Evaluate and cut V006
+## 3. Infer and cut the complete V006 video
 
 ```bash
 python evaluate.py \
@@ -85,13 +101,25 @@ python evaluate.py \
   --num_gpus 1
 ```
 
-Defaults are restricted to:
+The default is label-free full-video inference:
 
 ```text
-split=test_006_full
+full_video=true
 video_id=V006
 background_class=OTH
 clip_output_mode=per_class
+```
+
+Because the complete video includes unlabeled frames and frames used during
+training, this mode intentionally skips accuracy/F1 reporting. It is intended
+for clip generation. To reproduce the labeled 25,549-frame test result, use:
+
+```bash
+python evaluate.py \
+  --model_id 0006 \
+  --nofull_video \
+  --split test_006_full \
+  --num_gpus 1
 ```
 
 Evaluation produces:
@@ -100,8 +128,8 @@ Evaluation produces:
 models/vision/experiments/0006/
   0015.params
   mstcn/
-    predictions_V006.npz
-    class_clips/V006/
+    predictions_V006_full.npz
+    class_clips/V006_full/
       SFI.mp4
       SFF.mp4
       SFL.mp4

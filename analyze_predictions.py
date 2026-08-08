@@ -16,7 +16,7 @@ def safe_divide(numerator, denominator):
     return float(numerator) / float(denominator) if denominator else 0.0
 
 
-def load_predictions(path):
+def load_predictions(path, allow_unlabeled=False):
     with np.load(path, allow_pickle=False) as data:
         missing = REQUIRED_KEYS.difference(data.files)
         if missing:
@@ -36,7 +36,9 @@ def load_predictions(path):
             raise ValueError('{} has a different sample count'.format(key))
     if loaded['probabilities'].shape != (sample_count, len(loaded['class_names'])):
         raise ValueError('probabilities shape does not match samples and classes')
-    if np.any(loaded['labels'] < 0) or np.any(loaded['labels'] >= len(loaded['class_names'])):
+    minimum_label = -1 if allow_unlabeled else 0
+    if (np.any(loaded['labels'] < minimum_label)
+            or np.any(loaded['labels'] >= len(loaded['class_names']))):
         raise ValueError('labels contain an invalid class index')
 
     order = np.lexsort((loaded['frames'], loaded['videos']))
