@@ -10,6 +10,9 @@
 5. Remove every `OTH` interval.
 6. Write a separate chronological MP4 for each detected foreground class.
 
+Each detected event is exported from `t-1s` through `t+3s`. The values are
+converted to frames using the source video's FPS and clipped at video bounds.
+
 Run:
 
 ```bash
@@ -35,5 +38,7 @@ already exists:
 python export_class_clips.py \
   models/vision/experiments/0006/mstcn/predictions_V006_full.npz \
   --video-id V006 \
+  --before-seconds 1 \
+  --after-seconds 3 \
   --output-dir models/vision/experiments/0006/mstcn/class_clips/V006_full
 ```

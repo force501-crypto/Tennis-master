@@ -62,8 +62,10 @@ flags.DEFINE_enum('clip_output_mode', 'per_class', ['per_class', 'per_event'],
 flags.DEFINE_string('background_class', 'OTH', 'Class excluded from clips.')
 flags.DEFINE_integer('min_event_frames', 1,
                      'Discard foreground events shorter than this many frames.')
-flags.DEFINE_integer('padding_frames', 0,
-                     'Context frames added around exported events.')
+flags.DEFINE_float('clip_before_seconds', 1.0,
+                   'Clip context before each event in seconds.')
+flags.DEFINE_float('clip_after_seconds', 3.0,
+                   'Clip context after each event in seconds.')
 flags.DEFINE_string('clip_codec', 'mp4v', 'FourCC codec for output MP4 files.')
 
 
@@ -168,7 +170,8 @@ def main(_argv):
                 output_mode=FLAGS.clip_output_mode,
                 frame_step=FLAGS.frame_step,
                 min_event_frames=FLAGS.min_event_frames,
-                padding_frames=FLAGS.padding_frames,
+                before_seconds=FLAGS.clip_before_seconds,
+                after_seconds=FLAGS.clip_after_seconds,
                 codec=FLAGS.clip_codec,
             )
 
@@ -273,8 +276,8 @@ def _validate_flags():
         raise ValueError('Clip export requires prediction saving')
     if FLAGS.min_event_frames < 1:
         raise ValueError('min_event_frames must be positive')
-    if FLAGS.padding_frames < 0:
-        raise ValueError('padding_frames cannot be negative')
+    if FLAGS.clip_before_seconds < 0 or FLAGS.clip_after_seconds < 0:
+        raise ValueError('clip context seconds cannot be negative')
 
 
 if __name__ == '__main__':

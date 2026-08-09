@@ -144,23 +144,26 @@ def write_event(capture, writer, start_frame, end_frame):
 
 
 def export_events(video_path, output_dir, events, output_mode='per_class',
-                  padding_frames=0, codec='mp4v'):
+                  before_seconds=1.0, after_seconds=3.0, codec='mp4v'):
     """Cut events, keeping every foreground class in a separate output."""
-    if padding_frames < 0:
-        raise ValueError('padding_frames cannot be negative')
+    if before_seconds < 0 or after_seconds < 0:
+        raise ValueError('clip context seconds cannot be negative')
     if len(codec) != 4:
         raise ValueError('codec must contain exactly four characters')
 
     os.makedirs(output_dir, exist_ok=True)
     capture, fps, frame_size, frame_count = open_source(video_path)
+    before_frames = int(round(before_seconds * fps))
+    after_frames = int(round(after_seconds * fps))
     writers = {}
     manifest = []
     try:
         for event in sorted(events, key=lambda item: item['start_frame']):
             source_start = event['start_frame']
             source_end = event['end_frame']
-            write_start = max(0, source_start - padding_frames)
-            write_end = min(frame_count - 1, source_end + padding_frames)
+            # Export [event_start - 1s, event_end + 3s] by default.
+            write_start = max(0, source_start - before_frames)
+            write_end = min(frame_count - 1, source_end + after_frames)
             if write_start > write_end:
                 continue
 
@@ -217,7 +220,7 @@ def export_video_clips(predictions_file, video_id='V006', data_root='data',
                        video_file=None, output_dir=None,
                        background_class='OTH', output_mode='per_class',
                        frame_step=None, min_event_frames=1,
-                       padding_frames=0, codec='mp4v'):
+                       before_seconds=1.0, after_seconds=3.0, codec='mp4v'):
     """Export one video's foreground clips for CLI and evaluate.py callers."""
     data = select_video(
         load_predictions(predictions_file, allow_unlabeled=True), video_id)
@@ -238,7 +241,8 @@ def export_video_clips(predictions_file, video_id='V006', data_root='data',
         output_dir=os.path.abspath(output_dir),
         events=events,
         output_mode=output_mode,
-        padding_frames=padding_frames,
+        before_seconds=before_seconds,
+        after_seconds=after_seconds,
         codec=codec,
     )
     manifest_path = os.path.join(os.path.abspath(output_dir), 'manifest.csv')
@@ -249,6 +253,8 @@ def export_video_clips(predictions_file, video_id='V006', data_root='data',
     print('Source: {}'.format(os.path.abspath(video_path)))
     print('Prediction frame step: {}'.format(frame_step))
     print('Source FPS / frames: {:.3f} / {}'.format(fps, source_frames))
+    print('Clip context: t-{:.3g}s to t+{:.3g}s'.format(
+        before_seconds, after_seconds))
     print('Exported {} events into {} separate class(es): {}'.format(
         len(manifest), len(class_names), ', '.join(class_names)))
     print('OTH/background output: disabled')
@@ -269,7 +275,8 @@ def export(args):
         output_mode=args.output_mode,
         frame_step=args.frame_step,
         min_event_frames=args.min_event_frames,
-        padding_frames=args.padding_frames,
+        before_seconds=args.before_seconds,
+        after_seconds=args.after_seconds,
         codec=args.codec,
     )
 
@@ -298,8 +305,10 @@ def parse_args():
                         help='Prediction sampling step; inferred when omitted')
     parser.add_argument('--min-event-frames', type=int, default=1,
                         help='Discard shorter foreground events (source frames)')
-    parser.add_argument('--padding-frames', type=int, default=0,
-                        help='Context frames around each event (default: 0)')
+    parser.add_argument('--before-seconds', type=float, default=1.0,
+                        help='Seconds before each event (default: 1)')
+    parser.add_argument('--after-seconds', type=float, default=3.0,
+                        help='Seconds after each event (default: 3)')
     parser.add_argument('--codec', default='mp4v',
                         help='FourCC output codec (default: mp4v)')
     return parser.parse_args()
