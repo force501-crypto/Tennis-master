@@ -157,15 +157,16 @@ def export_events(video_path, output_dir, events, output_mode='per_class',
     after_frames = int(round(after_seconds * fps))
     writers = {}
     manifest = []
-    covered_until = -1
+    covered_until_by_class = {}
     skipped_covered_events = 0
     try:
         for event in sorted(events, key=lambda item: item['start_frame']):
             source_start = event['start_frame']
             source_end = event['end_frame']
-            # The preceding accepted clip already contains this event's start
-            # in its trailing context, so exporting it again would duplicate
-            # footage. This check is global across all foreground classes.
+            # Suppress duplicate context only within the same class. Events of
+            # another class are real actions in the rally and must be kept.
+            covered_until = covered_until_by_class.get(
+                event['class_name'], -1)
             if source_start <= covered_until:
                 skipped_covered_events += 1
                 continue
@@ -201,7 +202,7 @@ def export_events(video_path, output_dir, events, output_mode='per_class',
                 'output_file': os.path.relpath(output_path, output_dir),
             })
             manifest.append(row)
-            covered_until = write_end
+            covered_until_by_class[event['class_name']] = write_end
     finally:
         capture.release()
         for writer in writers.values():
@@ -266,7 +267,7 @@ def export_video_clips(predictions_file, video_id='V006', data_root='data',
         before_seconds, after_seconds))
     print('Exported {} events into {} separate class(es): {}'.format(
         len(manifest), len(class_names), ', '.join(class_names)))
-    print('Skipped {} event(s) already covered by the previous clip'.format(
+    print('Skipped {} same-class event(s) covered by a previous clip'.format(
         skipped_covered_events))
     print('OTH/background output: disabled')
     print('Output: {}'.format(os.path.abspath(output_dir)))
