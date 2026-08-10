@@ -12,6 +12,10 @@
 
 Each detected event is exported from `t-1s` through `t+3s`. The values are
 converted to frames using the source video's FPS and clipped at video bounds.
+Events are processed chronologically. If the next event starts inside the
+previous exported clip's trailing three-second context, it is skipped so the
+same source interval is not exported again, even when its predicted class is
+different.
 
 Run:
 

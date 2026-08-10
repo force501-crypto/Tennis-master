@@ -157,10 +157,18 @@ def export_events(video_path, output_dir, events, output_mode='per_class',
     after_frames = int(round(after_seconds * fps))
     writers = {}
     manifest = []
+    covered_until = -1
+    skipped_covered_events = 0
     try:
         for event in sorted(events, key=lambda item: item['start_frame']):
             source_start = event['start_frame']
             source_end = event['end_frame']
+            # The preceding accepted clip already contains this event's start
+            # in its trailing context, so exporting it again would duplicate
+            # footage. This check is global across all foreground classes.
+            if source_start <= covered_until:
+                skipped_covered_events += 1
+                continue
             # Export [event_start - 1s, event_end + 3s] by default.
             write_start = max(0, source_start - before_frames)
             write_end = min(frame_count - 1, source_end + after_frames)
@@ -193,12 +201,13 @@ def export_events(video_path, output_dir, events, output_mode='per_class',
                 'output_file': os.path.relpath(output_path, output_dir),
             })
             manifest.append(row)
+            covered_until = write_end
     finally:
         capture.release()
         for writer in writers.values():
             writer.release()
 
-    return manifest, fps, frame_count
+    return manifest, fps, frame_count, skipped_covered_events
 
 
 def write_manifest(path, video_id, rows):
@@ -236,7 +245,7 @@ def export_video_clips(predictions_file, video_id='V006', data_root='data',
     output_dir = output_dir or os.path.join(
         os.path.dirname(os.path.abspath(predictions_file)),
         'class_clips', video_id)
-    manifest, fps, source_frames = export_events(
+    manifest, fps, source_frames, skipped_covered_events = export_events(
         video_path=os.path.abspath(video_path),
         output_dir=os.path.abspath(output_dir),
         events=events,
@@ -257,6 +266,8 @@ def export_video_clips(predictions_file, video_id='V006', data_root='data',
         before_seconds, after_seconds))
     print('Exported {} events into {} separate class(es): {}'.format(
         len(manifest), len(class_names), ', '.join(class_names)))
+    print('Skipped {} event(s) already covered by the previous clip'.format(
+        skipped_covered_events))
     print('OTH/background output: disabled')
     print('Output: {}'.format(os.path.abspath(output_dir)))
     print('Manifest: {}'.format(manifest_path))
