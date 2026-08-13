@@ -21,6 +21,10 @@ Before clips are created, probabilities are smoothed over 9 frames. Events
 shorter than 5 frames or with mean confidence below 0.50 are discarded. This
 prevents a one-frame class flicker from becoming a four-second false clip.
 
+`evaluate_frame.py` is an independent fallback that loads the author's
+original model 0006 DenseNet frame classifier (`0015.params`) and performs
+direct per-frame classification. It does not load or run MS-TCN.
+
 Run:
 
 ```bash
