@@ -17,6 +17,10 @@ starts inside that class's previous trailing three-second context, it is
 skipped. Events with a different predicted class remain in the output so that
 continuous rally actions are not lost.
 
+Before clips are created, probabilities are smoothed over 9 frames. Events
+shorter than 5 frames or with mean confidence below 0.50 are discarded. This
+prevents a one-frame class flicker from becoming a four-second false clip.
+
 Run:
 
 ```bash

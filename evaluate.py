@@ -28,7 +28,7 @@ flags.DEFINE_bool(
     'full_video', True,
     'Run label-free inference over every extracted frame of --video_id.')
 flags.DEFINE_integer('sequence_length', 256, 'Frames per evaluation sequence.')
-flags.DEFINE_integer('sequence_stride', 256,
+flags.DEFINE_integer('sequence_stride', 128,
                      'Evaluation stride; overlap is averaged when smaller than length.')
 flags.DEFINE_integer('frame_step', 1, 'Sample every Nth frame inside contiguous runs.')
 flags.DEFINE_enum('feature_pool', 'mean', ['mean', 'flatten'],
@@ -60,8 +60,12 @@ flags.DEFINE_string('clips_output_dir', None,
 flags.DEFINE_enum('clip_output_mode', 'per_class', ['per_class', 'per_event'],
                   'Write one MP4 per class or one MP4 per detected event.')
 flags.DEFINE_string('background_class', 'OTH', 'Class excluded from clips.')
-flags.DEFINE_integer('min_event_frames', 1,
+flags.DEFINE_integer('min_event_frames', 5,
                      'Discard foreground events shorter than this many frames.')
+flags.DEFINE_integer('clip_smooth_window', 9,
+                     'Odd probability smoothing window used before clip export.')
+flags.DEFINE_float('min_event_confidence', 0.50,
+                   'Minimum mean probability for an exported event.')
 flags.DEFINE_float('clip_before_seconds', 1.0,
                    'Clip context before each event in seconds.')
 flags.DEFINE_float('clip_after_seconds', 3.0,
@@ -170,6 +174,8 @@ def main(_argv):
                 output_mode=FLAGS.clip_output_mode,
                 frame_step=FLAGS.frame_step,
                 min_event_frames=FLAGS.min_event_frames,
+                smooth_window=FLAGS.clip_smooth_window,
+                min_event_confidence=FLAGS.min_event_confidence,
                 before_seconds=FLAGS.clip_before_seconds,
                 after_seconds=FLAGS.clip_after_seconds,
                 codec=FLAGS.clip_codec,
@@ -276,6 +282,10 @@ def _validate_flags():
         raise ValueError('Clip export requires prediction saving')
     if FLAGS.min_event_frames < 1:
         raise ValueError('min_event_frames must be positive')
+    if FLAGS.clip_smooth_window < 1 or FLAGS.clip_smooth_window % 2 == 0:
+        raise ValueError('clip_smooth_window must be a positive odd integer')
+    if not 0.0 <= FLAGS.min_event_confidence <= 1.0:
+        raise ValueError('min_event_confidence must be in [0, 1]')
     if FLAGS.clip_before_seconds < 0 or FLAGS.clip_after_seconds < 0:
         raise ValueError('clip context seconds cannot be negative')
 

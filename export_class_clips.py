@@ -17,6 +17,7 @@ from analyze_predictions import (
     infer_frame_step,
     label_segments,
     load_predictions,
+    smooth_probabilities,
 )
 
 
@@ -44,7 +45,8 @@ def select_video(data, video_id):
     }
 
 
-def build_events(data, background_class, frame_step=None, min_event_frames=1):
+def build_events(data, background_class, frame_step=None, min_event_frames=5,
+                 smooth_window=9, min_event_confidence=0.50):
     """Convert frame predictions into foreground-only temporal events."""
     class_names = data['class_names']
     background_matches = np.where(class_names == background_class)[0]
@@ -54,6 +56,7 @@ def build_events(data, background_class, frame_step=None, min_event_frames=1):
                 background_class, class_names.tolist()))
     background_index = int(background_matches[0])
 
+    probabilities = data['probabilities']
     predictions = data['predictions']
     if np.any(predictions < 0) or np.any(predictions >= len(class_names)):
         raise ValueError('predictions contain an invalid class index')
@@ -64,8 +67,14 @@ def build_events(data, background_class, frame_step=None, min_event_frames=1):
         raise ValueError('frame_step must be at least 1')
     if min_event_frames < 1:
         raise ValueError('min_event_frames must be at least 1')
+    if smooth_window < 1 or smooth_window % 2 == 0:
+        raise ValueError('smooth_window must be a positive odd integer')
+    if not 0.0 <= min_event_confidence <= 1.0:
+        raise ValueError('min_event_confidence must be in [0, 1]')
 
     runs = contiguous_runs(data['videos'], data['frames'], frame_step)
+    probabilities = smooth_probabilities(probabilities, runs, smooth_window)
+    predictions = probabilities.argmax(axis=1).astype(np.int32)
     events = []
     class_counts = {}
     for run_start, run_end in runs:
@@ -78,6 +87,9 @@ def build_events(data, background_class, frame_step=None, min_event_frames=1):
                 continue
 
             class_name = str(class_names[class_index])
+            score = float(np.mean(probabilities[start:end, class_index]))
+            if score < min_event_confidence:
+                continue
             class_counts[class_name] = class_counts.get(class_name, 0) + 1
             events.append({
                 'class_index': class_index,
@@ -86,8 +98,7 @@ def build_events(data, background_class, frame_step=None, min_event_frames=1):
                 'start_frame': int(data['frames'][start]),
                 'end_frame': int(data['frames'][end - 1] + frame_step - 1),
                 'sample_count': int(end - start),
-                'score': float(np.mean(
-                    data['probabilities'][start:end, class_index])),
+                'score': score,
             })
     return events, frame_step
 
@@ -229,13 +240,15 @@ def write_manifest(path, video_id, rows):
 def export_video_clips(predictions_file, video_id='V006', data_root='data',
                        video_file=None, output_dir=None,
                        background_class='OTH', output_mode='per_class',
-                       frame_step=None, min_event_frames=1,
+                       frame_step=None, min_event_frames=5,
+                       smooth_window=9, min_event_confidence=0.50,
                        before_seconds=1.0, after_seconds=3.0, codec='mp4v'):
     """Export one video's foreground clips for CLI and evaluate.py callers."""
     data = select_video(
         load_predictions(predictions_file, allow_unlabeled=True), video_id)
     events, frame_step = build_events(
-        data, background_class, frame_step, min_event_frames)
+        data, background_class, frame_step, min_event_frames,
+        smooth_window, min_event_confidence)
     if not events:
         raise ValueError(
             'No non-{} events remain for {}'.format(
@@ -265,6 +278,8 @@ def export_video_clips(predictions_file, video_id='V006', data_root='data',
     print('Source FPS / frames: {:.3f} / {}'.format(fps, source_frames))
     print('Clip context: t-{:.3g}s to t+{:.3g}s'.format(
         before_seconds, after_seconds))
+    print('Event filtering: smooth_window={}, min_frames={}, confidence>={:.2f}'.format(
+        smooth_window, min_event_frames, min_event_confidence))
     print('Exported {} events into {} separate class(es): {}'.format(
         len(manifest), len(class_names), ', '.join(class_names)))
     print('Skipped {} same-class event(s) covered by a previous clip'.format(
@@ -287,6 +302,8 @@ def export(args):
         output_mode=args.output_mode,
         frame_step=args.frame_step,
         min_event_frames=args.min_event_frames,
+        smooth_window=args.smooth_window,
+        min_event_confidence=args.min_event_confidence,
         before_seconds=args.before_seconds,
         after_seconds=args.after_seconds,
         codec=args.codec,
@@ -315,8 +332,12 @@ def parse_args():
                         help='One MP4 per class or per event (default: per_class)')
     parser.add_argument('--frame-step', type=int, default=None,
                         help='Prediction sampling step; inferred when omitted')
-    parser.add_argument('--min-event-frames', type=int, default=1,
-                        help='Discard shorter foreground events (source frames)')
+    parser.add_argument('--min-event-frames', type=int, default=5,
+                        help='Discard shorter foreground events (default: 5 frames)')
+    parser.add_argument('--smooth-window', type=int, default=9,
+                        help='Odd probability smoothing window (default: 9)')
+    parser.add_argument('--min-event-confidence', type=float, default=0.50,
+                        help='Discard lower-confidence events (default: 0.50)')
     parser.add_argument('--before-seconds', type=float, default=1.0,
                         help='Seconds before each event (default: 1)')
     parser.add_argument('--after-seconds', type=float, default=3.0,
