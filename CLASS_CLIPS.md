@@ -46,3 +46,10 @@ python export_class_clips.py \
   --after-seconds 3 \
   --output-dir models/vision/experiments/0006/mstcn/class_clips/V006_full
 ```
+
+## Run model 0006 on another video
+
+Place `test001.mp4` under `data/videos/`, then run frame extraction, RGB
+feature extraction, and MS-TCN inference with `--video_id test001`. Arbitrary
+full videos do not require a split or annotation TXT file. Use
+`--clips_output_dir` to choose the output folder, such as `test001_output`.

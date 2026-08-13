@@ -1,4 +1,4 @@
-"""Evaluate the model 0006 RGB MS-TCN on V006 and export class clips."""
+"""Evaluate the model 0006 RGB MS-TCN on any extracted video."""
 from absl import app, flags
 from absl.flags import FLAGS
 import multiprocessing
@@ -23,10 +23,10 @@ flags.DEFINE_string('split_id', '02', 'Dataset split id.')
 flags.DEFINE_string('split', 'test_006_full',
                     'Labeled V006 split used when --nofull_video is set.')
 flags.DEFINE_string('video_id', 'V006',
-                    'Only this video is evaluated and clipped.')
+                    'Video ID without .mp4, for example V006 or test001.')
 flags.DEFINE_bool(
     'full_video', True,
-    'Run label-free inference over every extracted V006 frame.')
+    'Run label-free inference over every extracted frame of --video_id.')
 flags.DEFINE_integer('sequence_length', 256, 'Frames per evaluation sequence.')
 flags.DEFINE_integer('sequence_stride', 256,
                      'Evaluation stride; overlap is averaged when smaller than length.')
@@ -54,7 +54,7 @@ flags.DEFINE_bool('compress_predictions', True,
 flags.DEFINE_bool('export_clips', True,
                   'After evaluation, remove OTH and export separate class MP4 files.')
 flags.DEFINE_string('video_file', None,
-                    'Source V006 MP4; defaults to data/videos/V006.mp4.')
+                    'Source MP4; defaults to data/videos/<video_id>.mp4.')
 flags.DEFINE_string('clips_output_dir', None,
                     'Clip directory; full-video default ends in class_clips/V006_full.')
 flags.DEFINE_enum('clip_output_mode', 'per_class', ['per_class', 'per_event'],
@@ -270,8 +270,8 @@ def _validate_flags():
         raise ValueError('batch_size must be positive')
     if FLAGS.num_gpus < 0:
         raise ValueError('num_gpus must be non-negative')
-    if FLAGS.video_id != 'V006':
-        raise ValueError('This unified evaluator is intentionally restricted to V006')
+    if not FLAGS.video_id.strip() or FLAGS.video_id.lower().endswith('.mp4'):
+        raise ValueError('video_id must be non-empty and must not include .mp4')
     if FLAGS.export_clips and not (FLAGS.save_predictions or FLAGS.predictions_file):
         raise ValueError('Clip export requires prediction saving')
     if FLAGS.min_event_frames < 1:

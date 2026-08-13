@@ -1,49 +1,66 @@
-"""Script for processing the videos into frames and flow frames"""
-
+"""Extract RGB frames from one or more videos for the model 0006 pipeline."""
+import argparse
 import os
-# 导入 absl 库来处理命令行参数（如果你运行报错，请 pip install absl-py）
-from absl import app
-#from models.vision.flownet.run import generate_flows
+
 from utils.video import video_to_frames
 
-# 1. 恢复成处理全部 5 个视频的配置
-def vid2img(videos=('V006','V010'), videos_dir='data/videos', frames_dir='data/frames'):
-    """
-    videos: 包含你下载好的所有 5 个视频文件名
-    videos_dir: 明确告诉代码去 data/videos 文件夹找
-    frames_dir: 切好的图片会自动放到 data/frames 下，并按视频名字隔开
-    """
-    for video in videos:
-        # 自动循环拼接路径，例如: data/videos/V006.mp4, data/videos/V007.mp4...
-        video_path = os.path.join(videos_dir, video + '.mp4')
 
-        if not os.path.exists(video_path):
-            print(f"❌ 找不到视频！代码尝试访问的路径是: {os.path.abspath(video_path)}，已跳过此视频。")
-            continue
+def normalize_video_id(value):
+    """Return a video identifier without its .mp4 suffix."""
+    video_id = str(value).strip()
+    if video_id.lower().endswith('.mp4'):
+        video_id = video_id[:-4]
+    if not video_id:
+        raise ValueError('video id cannot be empty')
+    return video_id
 
-        print(f"✅ 成功找到视频，开始切帧: {video_path}")
-        video_to_frames(video_path=video_path,
-                        frames_dir=frames_dir,
-                        chunk_size=1000)
 
-# 2. 修改 main 函数
-def main(_argv):
-    print("--- 开始处理数据 ---")
+def extract_videos(video_ids, data_root='data', overwrite=False,
+                   every=1, chunk_size=1000):
+    videos_dir = os.path.join(data_root, 'videos')
+    frames_dir = os.path.join(data_root, 'frames')
+    os.makedirs(frames_dir, exist_ok=True)
 
-    # 确保 data 目录下有 frames 文件夹
-    if not os.path.exists('data/frames'):
-        os.makedirs('data/frames')
-        print("已创建 data/frames 文件夹")
+    for value in video_ids:
+        video_id = normalize_video_id(value)
+        video_path = os.path.join(videos_dir, '{}.mp4'.format(video_id))
+        if not os.path.isfile(video_path):
+            raise FileNotFoundError('Source video does not exist: {}'.format(
+                os.path.abspath(video_path)))
+        print('Extracting {} into {}'.format(
+            os.path.abspath(video_path), os.path.abspath(frames_dir)))
+        output = video_to_frames(
+            video_path=video_path,
+            frames_dir=frames_dir,
+            overwrite=overwrite,
+            every=every,
+            chunk_size=chunk_size)
+        if output is None:
+            raise RuntimeError('Frame extraction failed for {}'.format(video_path))
+        print('Frames ready: {}'.format(os.path.abspath(output)))
 
-    print("Step 1: Video to Images (正在从全部视频提取图片...)")
-    vid2img()
 
-    # 如果你现在不需要生成光流(Flow)，这两行可以保持注释状态
-    # print("Step 2: Images to Flow")
-    # img2flw()
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description='Extract RGB frames for arbitrary MP4 videos.')
+    parser.add_argument(
+        '--videos', nargs='+', required=True,
+        help='Video IDs with or without .mp4, for example test001')
+    parser.add_argument('--data-root', default='data')
+    parser.add_argument('--overwrite', action='store_true')
+    parser.add_argument('--every', type=int, default=1)
+    parser.add_argument('--chunk-size', type=int, default=1000)
+    args = parser.parse_args()
+    if args.every < 1 or args.chunk_size < 1:
+        parser.error('--every and --chunk-size must be positive')
+    return args
 
-    print("--- 所有的视频全部处理完成！ ---")
 
 if __name__ == '__main__':
-    # 使用 absl 的方式启动
-    app.run(main)
+    arguments = parse_args()
+    extract_videos(
+        arguments.videos,
+        data_root=arguments.data_root,
+        overwrite=arguments.overwrite,
+        every=arguments.every,
+        chunk_size=arguments.chunk_size)

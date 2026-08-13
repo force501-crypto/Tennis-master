@@ -126,7 +126,9 @@ def video_to_frames(video_path, frames_dir, overwrite=False, every=1, chunk_size
         return None  # return None
 
     frame_chunks = [[i, i+chunk_size] for i in range(0, total, chunk_size)]  # split the frames into chunk lists
-    frame_chunks[-1][-1] = min(frame_chunks[-1][-1], total-1)  # make sure last chunk has correct end frame
+    # ``extract_frames`` treats end as exclusive, so the final boundary must
+    # be ``total`` or the source video's last frame is silently omitted.
+    frame_chunks[-1][-1] = min(frame_chunks[-1][-1], total)
 
     for frame_chunk in frame_chunks:
         # make directory to save frames, its a sub dir in the frames_dir with the video name
@@ -141,8 +143,12 @@ def video_to_frames(video_path, frames_dir, overwrite=False, every=1, chunk_size
         futures = [executor.submit(extract_frames, video_path, frames_dir, overwrite, f[0], f[1], every)
                    for f in frame_chunks]  # submit the processes: extract_frames(...)
 
-        for i, f in enumerate(as_completed(futures)):  # as each process completes
-            print_progress(i, len(frame_chunks)-1, prefix=prefix_str, suffix='Complete')  # print it's progress
+        for i, f in enumerate(as_completed(futures), start=1):
+            # Surface worker failures and support videos shorter than one chunk.
+            f.result()
+            print_progress(
+                i, len(frame_chunks), prefix=prefix_str, suffix='Complete')
+        print()
 
     return os.path.join(frames_dir, video_filename)  # when done return the directory containing the frames
 
