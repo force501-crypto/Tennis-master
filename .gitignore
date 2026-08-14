@@ -20,5 +20,8 @@ models/vision/experiments/
 # Local safety backups created before isolated model experiments
 .local_backups/
 
+# Flask API uploads, logs, predictions and generated clips
+api_jobs/
+
 # IDE
 .idea/

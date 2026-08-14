@@ -1,0 +1,2 @@
+# Python 3.8 compatible Flask runtime for web.py
+Flask>=2.3,<3.1
