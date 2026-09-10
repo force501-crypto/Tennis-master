@@ -1,4 +1,4 @@
-"""Evaluate the model 0006 RGB MS-TCN on any extracted video."""
+"""test"""
 from absl import app, flags
 from absl.flags import FLAGS
 import multiprocessing
