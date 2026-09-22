@@ -8,13 +8,17 @@ poll the job endpoints for results.
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
+import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
+import time
 import uuid
 
 from flask import Flask, jsonify, request, send_from_directory, url_for
@@ -43,6 +47,14 @@ _executor = ThreadPoolExecutor(
     max_workers=int(os.environ.get('TENNIS_API_WORKERS', '1')))
 _status_lock = threading.Lock()
 _upload_lock = threading.Lock()
+_job_runtime_lock = threading.Lock()
+_job_processes = {}
+_job_futures = {}
+_cancelled_jobs = set()
+
+
+class JobCancelled(Exception):
+    pass
 
 
 def utc_now():
@@ -75,7 +87,11 @@ def read_status(job_id):
 
 def write_status(job_id, **updates):
     """Atomically update a persistent job status file."""
+    if is_job_cancelled(job_id):
+        raise JobCancelled(job_id)
     with _status_lock:
+        if is_job_cancelled(job_id):
+            raise JobCancelled(job_id)
         current = read_status(job_id) or {'job_id': job_id}
         current.update(updates)
         current['updated_at'] = utc_now()
@@ -86,6 +102,21 @@ def write_status(job_id, **updates):
             json.dump(current, handle, ensure_ascii=False, indent=2)
         os.replace(str(temporary), str(status_path(job_id)))
     return current
+
+
+def is_job_cancelled(job_id):
+    with _job_runtime_lock:
+        return job_id in _cancelled_jobs
+
+
+def valid_job_id(job_id):
+    return re.fullmatch(r'[0-9a-f]{32}', job_id or '') is not None
+
+
+def create_delete_token():
+    token = uuid.uuid4().hex + uuid.uuid4().hex
+    digest = hashlib.sha256(token.encode('ascii')).hexdigest()
+    return token, digest
 
 
 def positive_int(value, field_name):
@@ -127,16 +158,54 @@ def chunk_inventory(status):
     return received, uploaded_bytes
 
 
-def run_logged(command, log_handle, env=None):
+def terminate_process(process):
+    if process is None or process.poll() is not None:
+        return
+    try:
+        if os.name == 'nt':
+            process.terminate()
+        else:
+            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+        process.wait(timeout=5)
+        return
+    except Exception:
+        pass
+    try:
+        if os.name == 'nt':
+            process.kill()
+        else:
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        process.wait(timeout=5)
+    except Exception:
+        pass
+
+
+def run_logged(job_id, command, log_handle, env=None):
     log_handle.write('$ {}\n'.format(' '.join(command)))
     log_handle.flush()
-    subprocess.run(
+    if is_job_cancelled(job_id):
+        raise JobCancelled(job_id)
+    process = subprocess.Popen(
         command,
         cwd=str(PROJECT_ROOT),
         env=env,
         stdout=log_handle,
         stderr=subprocess.STDOUT,
-        check=True)
+        start_new_session=(os.name != 'nt'))
+    with _job_runtime_lock:
+        _job_processes[job_id] = process
+    try:
+        while process.poll() is None:
+            if is_job_cancelled(job_id):
+                terminate_process(process)
+                raise JobCancelled(job_id)
+            time.sleep(0.5)
+        if process.returncode != 0:
+            raise subprocess.CalledProcessError(process.returncode, command)
+    finally:
+        with _job_runtime_lock:
+            if _job_processes.get(job_id) is process:
+                _job_processes.pop(job_id, None)
 
 
 def process_job(job_id):
@@ -150,17 +219,21 @@ def process_job(job_id):
     env.setdefault('PYTHONUNBUFFERED', '1')
 
     try:
+        if is_job_cancelled(job_id):
+            raise JobCancelled(job_id)
         write_status(job_id, state='extracting_frames', progress='抽取视频帧')
         with log_path.open('a', encoding='utf-8') as log_handle:
-            run_logged([
+            run_logged(job_id, [
                 python, 'process.py', '--videos', job_id,
                 '--data-root', str(DATA_ROOT),
             ], log_handle, env)
 
+            if is_job_cancelled(job_id):
+                raise JobCancelled(job_id)
             write_status(
                 job_id, state='running_model',
                 progress='使用作者原始006模型进行逐帧分类')
-            run_logged([
+            run_logged(job_id, [
                 python, 'evaluate_frame.py',
                 '--video-id', job_id,
                 '--model-id', '0006',
@@ -190,7 +263,11 @@ def process_job(job_id):
             progress='处理完成',
             completed_at=utc_now(),
             result_files=files)
+    except JobCancelled:
+        return
     except Exception as error:
+        if is_job_cancelled(job_id):
+            return
         write_status(
             job_id,
             state='failed',
@@ -201,6 +278,7 @@ def process_job(job_id):
 
 def public_status(status):
     result = dict(status)
+    result.pop('delete_token_sha256', None)
     job_id = result['job_id']
     result['status_url'] = url_for(
         'get_job', job_id=job_id, _external=True)
@@ -247,7 +325,16 @@ def queue_job(job_id, original_name, created_at=None):
     if current.get('total_bytes') is not None:
         updates['uploaded_bytes'] = current['total_bytes']
     status = write_status(job_id, **updates)
-    _executor.submit(process_job, job_id)
+    future = _executor.submit(process_job, job_id)
+    with _job_runtime_lock:
+        _job_futures[job_id] = future
+
+    def discard_finished(completed_future):
+        with _job_runtime_lock:
+            if _job_futures.get(job_id) is completed_future:
+                _job_futures.pop(job_id, None)
+
+    future.add_done_callback(discard_finished)
     return status
 
 
@@ -277,6 +364,7 @@ def upload():
         return jsonify({'error': '服务器缺少原始006模型参数'}), 503
 
     job_id = uuid.uuid4().hex
+    delete_token, delete_token_sha256 = create_delete_token()
     directory = job_dir(job_id)
     directory.mkdir(parents=True, exist_ok=False)
     VIDEO_ROOT.mkdir(parents=True, exist_ok=True)
@@ -286,8 +374,11 @@ def upload():
         video_path.unlink()
         return jsonify({'error': '上传的视频为空'}), 400
 
+    write_status(job_id, delete_token_sha256=delete_token_sha256)
     status = queue_job(job_id, original_name)
-    return jsonify(public_status(status)), 202
+    result = public_status(status)
+    result['delete_token'] = delete_token
+    return jsonify(result), 202
 
 
 @app.post('/uploads/init')
@@ -323,6 +414,7 @@ def init_chunked_upload():
 
     chunk_count = (total_size + chunk_size - 1) // chunk_size
     job_id = uuid.uuid4().hex
+    delete_token, delete_token_sha256 = create_delete_token()
     directory = job_dir(job_id)
     directory.mkdir(parents=True, exist_ok=False)
     chunks_dir(job_id).mkdir()
@@ -335,8 +427,11 @@ def init_chunked_upload():
         uploaded_bytes=0,
         chunk_size=chunk_size,
         chunk_count=chunk_count,
+        delete_token_sha256=delete_token_sha256,
         created_at=utc_now())
-    return jsonify(public_upload_status(status)), 201
+    result = public_upload_status(status)
+    result['delete_token'] = delete_token
+    return jsonify(result), 201
 
 
 @app.get('/uploads/<job_id>')
@@ -469,6 +564,73 @@ def get_job(job_id):
     if status is None:
         return jsonify({'error': '任务不存在'}), 404
     return jsonify(public_status(status))
+
+
+def remove_job_artifacts(job_id):
+    paths = [
+        job_dir(job_id),
+        VIDEO_ROOT / '{}.mp4'.format(job_id),
+        VIDEO_ROOT / '.{}.assembling'.format(job_id),
+        DATA_ROOT / 'frames' / '{}.mp4'.format(job_id),
+        DATA_ROOT / 'features' / '0006' / '{}.mp4'.format(job_id),
+    ]
+    for path in paths:
+        if path.is_dir():
+            shutil.rmtree(str(path), ignore_errors=True)
+        elif path.exists():
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def authorized_to_delete(status):
+    provided = request.headers.get('X-Job-Delete-Token', '')
+    expected = status.get('delete_token_sha256', '')
+    if not provided or not expected:
+        return False
+    actual = hashlib.sha256(provided.encode('utf-8')).hexdigest()
+    return hmac.compare_digest(actual, expected)
+
+
+@app.delete('/jobs/<job_id>')
+def delete_job(job_id):
+    """Cancel and delete one job using its unguessable capability token."""
+    if not valid_job_id(job_id):
+        return jsonify({'error': '无效任务 ID'}), 400
+    status = read_status(job_id)
+    if status is None:
+        return jsonify({'job_id': job_id, 'deleted': True}), 200
+    if not authorized_to_delete(status):
+        return jsonify({'error': '无权删除该任务'}), 403
+
+    with _job_runtime_lock:
+        _cancelled_jobs.add(job_id)
+        future = _job_futures.get(job_id)
+        process = _job_processes.get(job_id)
+
+    if future is not None:
+        future.cancel()
+    terminate_process(process)
+
+    deadline = time.monotonic() + 5.0
+    while future is not None and not future.done() and time.monotonic() < deadline:
+        time.sleep(0.1)
+
+    # Chunk writes and video assembly also use this lock. Waiting here prevents
+    # an in-flight upload request from recreating files after deletion.
+    with _upload_lock:
+        remove_job_artifacts(job_id)
+
+    with _job_runtime_lock:
+        _job_processes.pop(job_id, None)
+        _job_futures.pop(job_id, None)
+
+    return jsonify({
+        'job_id': job_id,
+        'deleted': True,
+        'progress': '任务及其服务器文件已删除',
+    })
 
 
 @app.get('/jobs/<job_id>/results')
